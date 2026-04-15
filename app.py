@@ -18,10 +18,12 @@ except ImportError:
 # ==========================================
 # 0. FIREBASE BAĞLANTISI (BULUT VERİTABANI)
 # ==========================================
-# Firebase uygulaması daha önce başlatılmamışsa başlat
-if not firebase_admin._apps:
+# Firebase uygulaması daha önce başlatılmış mı diye kontrol ediyoruz
+try:
+    firebase_admin.get_app()
+except ValueError:
+    # Eğer başlatılmamışsa (ValueError verirse) sıfırdan bağlanıyoruz
     try:
-        # Streamlit Secrets'tan Firebase anahtarını alıyoruz
         firebase_secrets = dict(st.secrets["firebase"])
         cred = credentials.Certificate(firebase_secrets)
         firebase_admin.initialize_app(cred)
