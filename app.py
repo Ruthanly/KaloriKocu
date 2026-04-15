@@ -1,11 +1,12 @@
 import streamlit as st
 import google.generativeai as genai
 import datetime
-import json
-import os
 import re
-import shutil
-from PIL import Image
+
+# Firebase kütüphaneleri
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import firestore
 
 try:
     import pandas as pd
@@ -15,44 +16,37 @@ except ImportError:
     GRAFIK_AKTIF = False
 
 # ==========================================
-# 0. KULLANICI VERİTABANI VE GİRİŞ SİSTEMİ
+# 0. FIREBASE BAĞLANTISI (BULUT VERİTABANI)
 # ==========================================
-USERS_FILE = "kullanicilar.json"
+# Firebase uygulaması daha önce başlatılmamışsa başlat
+if not firebase_admin._apps:
+    try:
+        # Streamlit Secrets'tan Firebase anahtarını alıyoruz
+        firebase_secrets = dict(st.secrets["firebase"])
+        cred = credentials.Certificate(firebase_secrets)
+        firebase_admin.initialize_app(cred)
+    except Exception as e:
+        st.error(f"Veritabanı bağlantı hatası: Sisteme bağlanılamadı. Lütfen yöneticinizle iletişime geçin. (Hata: {e})")
 
-def kullanicilari_yukle():
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            users = json.load(f)
-    else:
-        users = {}
-        
-    degisiklik = False
-    
-    if "ruthanly" not in users:
-        users["ruthanly"] = {"sifre": "1234"}
-        degisiklik = True
-    if "admin" not in users:
-        users["admin"] = {"sifre": "admin"}
-        degisiklik = True
-        
-    if degisiklik:
-        with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(users, f, ensure_ascii=False, indent=4)
-            
-    return users
+# Firestore bağlantısını al
+db_firestore = firestore.client()
 
-def kullanicilari_kaydet(data):
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-if 'kullanicilar' not in st.session_state:
-    st.session_state.kullanicilar = kullanicilari_yukle()
-
+# ==========================================
+# KULLANICI GİRİŞ SİSTEMİ (BULUT DESTEKLİ)
+# ==========================================
 if 'aktif_kullanici' not in st.session_state:
     st.session_state.aktif_kullanici = None
 
+# Varsayılan Admin Hesabını Güvenceye Al
+def admin_kontrol():
+    admin_ref = db_firestore.collection("hesaplar").document("admin")
+    if not admin_ref.get().exists:
+        admin_ref.set({"sifre": "admin"})
+
+admin_kontrol()
+
 # ==========================================
-# 1. AYARLAR VE VERİ YÖNETİMİ 
+# 1. AYARLAR VE YAPAY ZEKA
 # ==========================================
 API_KEY = "AIzaSyC9LZqR3Ej8KPY_sccq3N2dfydw_9kQcf4"
 genai.configure(api_key=API_KEY)
@@ -67,21 +61,14 @@ except Exception:
     model = None
 
 YAYGIN_YEMEKLER = [
-    "Haşlanmış Yumurta", "Sahanda Yumurta", "Menemen", "Omlet",
-    "Haşlanmış Patates", "Patates Kızartması", "Fırın Patates",
-    "Haşlanmış Tavuk", "Izgara Tavuk", "Tavuk Sote", "Tavuk Döner",
-    "Et Döner", "İskender", "Izgara Köfte", "Sulu Köfte", "Kavurma",
-    "Mercimek Çorbası", "Ezogelin Çorbası", "Tarhana Çorbası", "Tavuk Suyu Çorbası",
-    "Pirinç Pilavı", "Bulgur Pilavı", "Domatesli Pilav",
-    "Spagetti", "Salçalı Makarna", "Kıymalı Makarna", "Mantı",
-    "Çoban Salata", "Mevsim Salata", "Tavuklu Salata", "Ton Balıklı Salata",
-    "Beyaz Peynir", "Kaşar Peyniri", "Tulum Peyniri", "Siyah Zeytin", "Yeşil Zeytin",
-    "Tereyağı", "Bal", "Çilek Reçeli", "Vişne Reçeli",
-    "Beyaz Ekmek", "Tam Buğday Ekmeği", "Kepekli Ekmek", "Simit", "Poğaça", "Açma", "Börek",
-    "Elma", "Muz", "Portakal", "Mandalina", "Üzüm", "Karpuz", "Kavun", "Çilek",
-    "Süt", "Yoğurt", "Ayran", "Kefir", "Cacık",
-    "Çay", "Yeşil Çay", "Türk Kahvesi", "Filtre Kahve", "Kola", "Meyve Suyu", "Maden Suyu",
-    "Baklava", "Sütlaç", "Kazandibi", "Profiterol", "Dondurma", "Çikolata", "Ceviz", "Fındık", "Badem", "Fıstık"
+    "Haşlanmış Yumurta", "Sahanda Yumurta", "Menemen", "Omlet", "Haşlanmış Patates", "Patates Kızartması", "Fırın Patates",
+    "Haşlanmış Tavuk", "Izgara Tavuk", "Tavuk Sote", "Tavuk Döner", "Et Döner", "İskender", "Izgara Köfte", "Sulu Köfte", "Kavurma",
+    "Mercimek Çorbası", "Ezogelin Çorbası", "Tarhana Çorbası", "Tavuk Suyu Çorbası", "Pirinç Pilavı", "Bulgur Pilavı", "Domatesli Pilav",
+    "Spagetti", "Salçalı Makarna", "Kıymalı Makarna", "Mantı", "Çoban Salata", "Mevsim Salata", "Tavuklu Salata", "Ton Balıklı Salata",
+    "Beyaz Peynir", "Kaşar Peyniri", "Tulum Peyniri", "Siyah Zeytin", "Yeşil Zeytin", "Tereyağı", "Bal", "Çilek Reçeli", "Vişne Reçeli",
+    "Beyaz Ekmek", "Tam Buğday Ekmeği", "Kepekli Ekmek", "Simit", "Poğaça", "Açma", "Börek", "Elma", "Muz", "Portakal", "Mandalina", 
+    "Üzüm", "Karpuz", "Kavun", "Çilek", "Süt", "Yoğurt", "Ayran", "Kefir", "Cacık", "Çay", "Yeşil Çay", "Türk Kahvesi", "Filtre Kahve", 
+    "Kola", "Meyve Suyu", "Maden Suyu", "Baklava", "Sütlaç", "Kazandibi", "Profiterol", "Dondurma", "Çikolata", "Ceviz", "Fındık", "Badem"
 ]
 
 st.set_page_config(page_title="Kalori ve Koçluk", page_icon="🍏", layout="wide")
@@ -96,35 +83,42 @@ if st.session_state.aktif_kullanici is None:
         tab_giris, tab_kayit = st.tabs(["🔑 Giriş Yap", "📝 Kayıt Ol"])
         
         with tab_giris:
-            giris_kullanici_adi = st.text_input("Kullanıcı Adı", key="login_kadi")
+            giris_kadi = st.text_input("Kullanıcı Adı", key="login_kadi").strip().lower()
             giris_sifre = st.text_input("Şifre", type="password", key="login_sifre")
             
             if st.button("Giriş Yap", use_container_width=True, type="primary"):
-                users = st.session_state.kullanicilar
-                if giris_kullanici_adi in users and users[giris_kullanici_adi]["sifre"] == giris_sifre:
-                    st.session_state.aktif_kullanici = giris_kullanici_adi
-                    st.success(f"Hoş geldin, {giris_kullanici_adi}!")
-                    st.rerun()
+                if not giris_kadi or not giris_sifre:
+                    st.warning("Lütfen alanları doldurun.")
                 else:
-                    st.error("Kullanıcı adı veya şifre hatalı!")
+                    kullanici_doc = db_firestore.collection("hesaplar").document(giris_kadi).get()
+                    if kullanici_doc.exists and kullanici_doc.to_dict().get("sifre") == giris_sifre:
+                        st.session_state.aktif_kullanici = giris_kadi
+                        st.success("Giriş başarılı!")
+                        st.rerun()
+                    else:
+                        st.error("Kullanıcı adı veya şifre hatalı!")
                     
         with tab_kayit:
-            kayit_kullanici_adi = st.text_input("Yeni Kullanıcı Adı", key="reg_kadi")
+            kayit_kadi = st.text_input("Yeni Kullanıcı Adı", key="reg_kadi").strip().lower()
             kayit_sifre = st.text_input("Yeni Şifre", type="password", key="reg_sifre")
             kayit_sifre_tekrar = st.text_input("Şifreyi Tekrar Girin", type="password", key="reg_sifre2")
             
             if st.button("Kayıt Ol", use_container_width=True):
-                users = st.session_state.kullanicilar
-                if not kayit_kullanici_adi or not kayit_sifre:
+                if not kayit_kadi or not kayit_sifre:
                     st.warning("Lütfen tüm alanları doldurun.")
-                elif kayit_kullanici_adi in users:
-                    st.error("Bu kullanıcı adı zaten alınmış!")
+                elif " " in kayit_kadi:
+                    st.error("Kullanıcı adında boşluk olamaz!")
                 elif kayit_sifre != kayit_sifre_tekrar:
                     st.error("Şifreler eşleşmiyor!")
                 else:
-                    users[kayit_kullanici_adi] = {"sifre": kayit_sifre}
-                    kullanicilari_kaydet(users)
-                    st.success("Kayıt başarılı! Şimdi giriş yapabilirsiniz.")
+                    kullanici_ref = db_firestore.collection("hesaplar").document(kayit_kadi)
+                    if kullanici_ref.get().exists:
+                        st.error("Bu kullanıcı adı zaten alınmış!")
+                    else:
+                        kullanici_ref.set({"sifre": kayit_sifre, "kayit_tarihi": str(datetime.date.today())})
+                        # İlk veritabanı iskeletini oluştur
+                        db_firestore.collection("kullanici_verileri").document(kayit_kadi).set({"profil": {"isim": kayit_kadi}, "gecmis": {}})
+                        st.success("Kayıt başarılı! Şimdi giriş yapabilirsiniz.")
 
 # --- ADMIN PANELİ ---
 elif st.session_state.aktif_kullanici == "admin":
@@ -139,22 +133,20 @@ elif st.session_state.aktif_kullanici == "admin":
     st.divider()
     st.markdown("### 👥 Kayıtlı Kullanıcılar ve Durumları")
     
-    users = st.session_state.kullanicilar
+    hesaplar = db_firestore.collection("hesaplar").stream()
     
-    for kadi in users:
-        if kadi == "admin":
-            continue
+    for hesap in hesaplar:
+        kadi = hesap.id
+        if kadi == "admin": continue
             
-        user_file = f"veri_{kadi}.json"
+        veri_doc = db_firestore.collection("kullanici_verileri").document(kadi).get()
         
         with st.container(border=True):
             c1, c2, c3, c4 = st.columns(4)
             c1.markdown(f"#### 👤 {kadi}")
             
-            if os.path.exists(user_file):
-                with open(user_file, "r", encoding="utf-8") as f:
-                    u_data = json.load(f)
-                
+            if veri_doc.exists:
+                u_data = veri_doc.to_dict()
                 profil = u_data.get("profil", {})
                 gecmis = u_data.get("gecmis", {})
                 
@@ -167,7 +159,7 @@ elif st.session_state.aktif_kullanici == "admin":
                 verilen = baslangic - kilo
                 
                 c2.write(f"**İsim:** {isim}")
-                c2.write(f"**Sistemdeki Gün:** {kayitli_gun}")
+                c2.write(f"**Aktif Gün:** {kayitli_gun}")
                 
                 c3.write(f"**Başlangıç:** {baslangic} kg")
                 c3.write(f"**Güncel:** {kilo} kg")
@@ -179,71 +171,31 @@ elif st.session_state.aktif_kullanici == "admin":
                     oran = max(0.0, min(verilen / (baslangic - hedef), 1.0))
                     st.progress(oran, text=f"Hedefe Ulaşma: %{oran * 100:.1f}")
             else:
-                c2.info("Bu kullanıcı henüz sisteme veri girmemiş.")
+                c2.info("Veri girilmemiş.")
 
 # --- ANA UYGULAMA (Kullanıcılar İçin) ---
 else:
-    DATA_FILE = f"veri_{st.session_state.aktif_kullanici}.json"
+    kullanici_adi = st.session_state.aktif_kullanici
+    doc_ref = db_firestore.collection("kullanici_verileri").document(kullanici_adi)
 
-    def veritabanini_akillandir(db):
-        degisiklik_var = False
-        if "profil" not in db: db["profil"] = {}
-        if "gecmis" not in db: db["gecmis"] = {}
-        
-        for tarih, veri in db.get("gecmis", {}).items():
-            yeni_ogunler = []
-            for ogun in veri.get("ogünler", []):
-                if isinstance(ogun, str):
-                    degisiklik_var = True
-                    tip = "Öğün"
-                    if "**" in ogun:
-                        try: tip = ogun.split("**")[1]
-                        except: pass
-                    
-                    kalemler = []
-                    toplam_kalori, toplam_p, toplam_c, toplam_y = 0, 0, 0, 0
-                    for satir in ogun.split('\n'):
-                        satir = satir.strip()
-                        if satir.startswith('-'):
-                            m = re.match(r'-\s*(.*?):\s*(\d+)', satir)
-                            if m: kalemler.append({"ad": m.group(1).strip(), "kalori": int(m.group(2)), "p":0, "c":0, "y":0})
-                        elif "TOPLAM" in satir.upper():
-                            m = re.search(r'TOPLAM:\s*(\d+)', satir, re.IGNORECASE)
-                            if m: toplam_kalori = int(m.group(1))
-                    
-                    if not kalemler: kalemler.append({"ad": "Eski Kayıt", "kalori": toplam_kalori, "p":0, "c":0, "y":0})
-                    yeni_ogunler.append({"tip": tip, "kalemler": kalemler, "toplam_kalori": toplam_kalori, "toplam_p": toplam_p, "toplam_c": toplam_c, "toplam_y": toplam_y})
-                else:
-                    yeni_ogunler.append(ogun)
-            veri["ogünler"] = yeni_ogunler
-            
-        if degisiklik_var:
-            with open(DATA_FILE, "w", encoding="utf-8") as f:
-                json.dump(db, f, ensure_ascii=False, indent=4)
-        return db
+    # Verileri buluttan çekme fonksiyonu
+    def verileri_yukle_bulut():
+        doc = doc_ref.get()
+        if doc.exists:
+            return doc.to_dict()
+        else:
+            varsayilan = {"profil": {"isim": "Ali Kaan Tüfekçi" if kullanici_adi == "ruthanly" else kullanici_adi}, "gecmis": {}}
+            doc_ref.set(varsayilan)
+            return varsayilan
 
-    def verileri_yukle():
-        # Eski verileri güvenli şekilde ruthanly hesabına taşı
-        if st.session_state.aktif_kullanici == "ruthanly" and not os.path.exists(DATA_FILE) and os.path.exists("kalori_verileri.json"):
-            try:
-                shutil.copy("kalori_verileri.json", DATA_FILE)
-            except Exception:
-                pass
+    # Verileri buluta kaydetme fonksiyonu
+    def verileri_kaydet_bulut(data):
+        doc_ref.set(data)
 
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return veritabanini_akillandir(json.load(f))
-        
-        varsayilan_isim = "Ali Kaan Tüfekçi" if st.session_state.aktif_kullanici == "ruthanly" else st.session_state.aktif_kullanici
-        return {"profil": {"isim": varsayilan_isim}, "gecmis": {}}
-
-    def verileri_kaydet(data):
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-
-    if 'db' not in st.session_state or st.session_state.get('db_user') != st.session_state.aktif_kullanici:
-        st.session_state.db = verileri_yukle()
-        st.session_state.db_user = st.session_state.aktif_kullanici
+    # Session State'e verileri al
+    if 'db' not in st.session_state or st.session_state.get('db_user') != kullanici_adi:
+        st.session_state.db = verileri_yukle_bulut()
+        st.session_state.db_user = kullanici_adi
         
     db = st.session_state.db
 
@@ -257,8 +209,9 @@ else:
         db["gecmis"][tarih]["toplam_p"] = top_p
         db["gecmis"][tarih]["toplam_c"] = top_c
         db["gecmis"][tarih]["toplam_y"] = top_y
-        verileri_kaydet(db)
+        verileri_kaydet_bulut(db)
 
+    # AI Okuyucu
     def ai_metnini_parcala(satir):
         satir = satir.strip()
         if not satir.startswith('-'): return None
@@ -320,7 +273,7 @@ else:
     # ==========================================
     p = db["profil"]
 
-    isim = p.get("isim", st.session_state.aktif_kullanici)
+    isim = p.get("isim", kullanici_adi)
     kilo = float(p.get("kilo", p.get("baslangic_kilo", 80.0)))
     boy = int(p.get("boy", 175))
     cinsiyet = p.get("cinsiyet", "Erkek")
@@ -354,10 +307,10 @@ else:
     hedef_karb = int((orijinal_gunluk_limit - (hedef_protein * 4) - (hedef_yag * 9)) / 4)
 
     # ==========================================
-    # 3. YAN MENÜ: PROFİL VE SABİT BAŞARI MERKEZİ
+    # 3. YAN MENÜ: PROFİL
     # ==========================================
     with st.sidebar:
-        st.title(f"👤 {st.session_state.aktif_kullanici}")
+        st.title(f"👤 {isim}")
         if st.button("🚪 Çıkış Yap", use_container_width=True, type="primary"):
             st.session_state.aktif_kullanici = None
             st.rerun()
@@ -369,18 +322,18 @@ else:
             v = st.session_state[v_key]
             db["profil"][k] = str(v) if isinstance(v, datetime.date) else v
             if k == "kilo": db["profil"]["son_kilo_guncelleme"] = str(datetime.date.today())
-            verileri_kaydet(db)
+            verileri_kaydet_bulut(db)
             
         def profil_sil(k):
             if k in db["profil"]:
                 del db["profil"][k]
-                verileri_kaydet(db)
+                verileri_kaydet_bulut(db)
                 
         def hizala(): st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
 
         with st.expander("👤 Kişisel Bilgiler", expanded=False):
             c1, c2 = st.columns([5,2])
-            c1.text_input("İsim", p.get("isim", st.session_state.aktif_kullanici), key="w_isim", on_change=profil_kaydet, args=("isim", "w_isim"))
+            c1.text_input("İsim", p.get("isim", kullanici_adi), key="w_isim", on_change=profil_kaydet, args=("isim", "w_isim"))
             with c2: 
                 hizala()
                 if st.button("🗑️", key="del_isim", use_container_width=True): profil_sil("isim"); st.rerun()
@@ -412,7 +365,7 @@ else:
                 if st.button("🗑️", key="del_bk", use_container_width=True): profil_sil("baslangic_kilo"); st.rerun()
                 
             if st.button("💾 Kaydet", key="btn_kaydet_fiz", use_container_width=True):
-                verileri_kaydet(db)
+                verileri_kaydet_bulut(db)
                 st.success("Kişisel bilgiler kaydedildi!")
 
         with st.expander("⚖️ Güncel Kilo Takibi", expanded=True):
@@ -427,7 +380,7 @@ else:
                 
             if col_btn2.button("💾 Kaydet", key="btn_kaydet_kilo", use_container_width=True):
                 db["profil"]["son_kilo_guncelleme"] = str(datetime.date.today())
-                verileri_kaydet(db)
+                verileri_kaydet_bulut(db)
                 st.success("Kilo güncellendi!")
 
         with st.expander("🎯 Hedeflerim", expanded=False):
@@ -444,7 +397,7 @@ else:
                 if st.button("🗑️", key="del_hg", use_container_width=True): profil_sil("hedef_gun"); st.rerun()
                 
             if st.button("💾 Kaydet", key="btn_kaydet_hedef", use_container_width=True):
-                verileri_kaydet(db)
+                verileri_kaydet_bulut(db)
                 st.success("Hedefler kaydedildi!")
 
         st.divider()
@@ -468,8 +421,6 @@ else:
             if veri.get("toplam", 0) > 0: 
                 toplam_acik_panel += int(tdee) - net_alinan
                 
-        yakilan_tahmini_yag_panel = toplam_acik_panel / 7700 if toplam_acik_panel > 0 else 0
-        
         if hedef_toplam_acik > 0:
             ilerleme_orani = max(0.0, min(toplam_acik_panel / hedef_toplam_acik, 1.0))
         else:
@@ -512,7 +463,7 @@ else:
             if islem_tarihi not in db["gecmis"]: 
                 db["gecmis"][islem_tarihi] = {"toplam": 0, "toplam_p": 0, "toplam_c": 0, "toplam_y": 0, "ogünler": [], "su_litre": 0.0, "egzersizler": [], "yakilan_kalori": 0}
                 db["gecmis"][islem_tarihi]["su_hedef"] = hedef_su_litre
-                verileri_kaydet(db)
+                verileri_kaydet_bulut(db)
             
             db["gecmis"][islem_tarihi].setdefault("egzersizler", [])
             db["gecmis"][islem_tarihi].setdefault("yakilan_kalori", 0)
@@ -539,7 +490,7 @@ else:
                     if fark > 0:
                         telafi = fark // 3
                         gunluk_limit = orijinal_gunluk_limit - telafi 
-                        st.warning(f"⚖️ **{isim}, Dünkü Kaçamak:** Dün hedefini yaklaşık **{fark} kcal** aştın. Motivasyonunu asla kaybetme, diyetlerde böyle şeyler olur! Bu artışı 3 güne yayarak rahatça telafi edeceğiz. Bugünkü hedeften **{telafi} kcal** kısıldı.")
+                        st.warning(f"⚖️ **{isim}, Dünkü Kaçamak:** Dün hedefini yaklaşık **{fark} kcal** aştın. Motivasyonunu asla kaybetme! Bu artışı 3 güne yayarak rahatça telafi edeceğiz. Bugünkü hedeften **{telafi} kcal** kısıldı.")
                     elif fark <= 0:
                         st.success(f"🎉 **Harika İş Çıkardın {isim}:** Dün hedefine tam sadık kaldın ve **{abs(fark)} kcal** ekstra açık yarattın. Aynen böyle devam et!")
 
@@ -606,7 +557,7 @@ else:
                 
                 def su_ekle(miktar):
                     db["gecmis"][islem_tarihi]["su_litre"] = round(db["gecmis"][islem_tarihi].get("su_litre", 0.0) + miktar, 2)
-                    verileri_kaydet(db)
+                    verileri_kaydet_bulut(db)
 
                 btn_s1, btn_s2, btn_s3 = st.columns(3)
                 with btn_s1:
@@ -620,7 +571,7 @@ else:
                 with btn_s3:
                     if st.button("🔄 Sıfırla", use_container_width=True):
                         db["gecmis"][islem_tarihi]["su_litre"] = 0.0
-                        verileri_kaydet(db)
+                        verileri_kaydet_bulut(db)
                         st.rerun()
 
         with st.container(border=True):
@@ -637,7 +588,6 @@ else:
 
             if st.session_state.onay_bekleyen_metin:
                 st.warning(f"🤖 AI {st.session_state.kaydedilecek_ogun_tipi} öğününü ve makroları hesapladı. Onaylıyor musun?")
-                
                 st.info(st.session_state.onay_bekleyen_metin.replace('\n', '\n\n'))
                 
                 c_evet, c_hayir = st.columns(2)
@@ -948,7 +898,7 @@ else:
                     if c_e3.button("❌", key=f"del_ex_{islem_tarihi}_{e_idx}"):
                         db["gecmis"][islem_tarihi]["yakilan_kalori"] -= egzersiz["kalori"]
                         db["gecmis"][islem_tarihi]["egzersizler"].pop(e_idx)
-                        verileri_kaydet(db)
+                        verileri_kaydet_bulut(db)
                         st.rerun()
 
             st.markdown("#### ➕ Yeni Egzersiz Ekle")
@@ -980,7 +930,7 @@ else:
                                 
                                 db["gecmis"][islem_tarihi]["egzersizler"].append({"ad": ex_ad, "sure": ex_sure, "kalori": kalori_burn})
                                 db["gecmis"][islem_tarihi]["yakilan_kalori"] += kalori_burn
-                                verileri_kaydet(db)
+                                verileri_kaydet_bulut(db)
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Hesaplama yapılamadı: {e}")
@@ -993,7 +943,7 @@ else:
                     if m_ex_ad:
                         db["gecmis"][islem_tarihi]["egzersizler"].append({"ad": m_ex_ad, "sure": "Manuel", "kalori": m_ex_kal})
                         db["gecmis"][islem_tarihi]["yakilan_kalori"] += m_ex_kal
-                        verileri_kaydet(db)
+                        verileri_kaydet_bulut(db)
                         st.rerun()
 
     # ==========================================
