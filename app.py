@@ -63,7 +63,7 @@ except ValueError:
 db_firestore = firestore.client()
 
 # ==========================================
-# YARDIMCI FONKSİYONLAR (JSON & JS & DİĞER)
+# YARDIMCI FONKSİYONLAR (ZIRHLI JSON)
 # ==========================================
 if 'aktif_kullanici' not in st.session_state: st.session_state.aktif_kullanici = None
 if 'incelenen_kullanici' not in st.session_state: st.session_state.incelenen_kullanici = None
@@ -82,24 +82,45 @@ if st.session_state.panel_kapat:
     </script>""", height=0, width=0)
     st.session_state.panel_kapat = False
 
-def json_temizle_ve_oku(metin):
-    """Yapay zekadan gelen metni güvenli bir şekilde JSON formatına çevirir."""
+def guvenli_json_oku(metin):
+    """Yapay zekadan gelen veriyi ASLA ÇÖKMEYECEK şekilde okur."""
     try:
+        # Önce doğrudan okumayı dener
         return json.loads(metin)
-    except json.JSONDecodeError:
-        metin = re.sub(r'```json\s*|```\s*', '', metin)
-        bas = metin.find('[')
-        son = metin.rfind(']') + 1
-        if bas != -1 and son != 0:
-            metin = metin[bas:son]
-        metin = metin.replace('\n', ' ').replace('\r', '')
+    except:
+        pass
+
+    try:
+        # Markdown işaretlerini ve dışarıdaki yazıları temizle
+        temiz = re.sub(r'```json\s*|```\s*', '', metin)
+        match = re.search(r'(\[.*\]|\{.*\})', temiz, re.DOTALL)
+        if match:
+            temiz = match.group(1)
+        
+        # Enter ve tab hatalarını sil
+        temiz = temiz.replace('\n', ' ').replace('\r', '').replace('\t', ' ')
+        veri = json.loads(temiz)
+        
+        # Obje geldiyse diziye çevir
+        if isinstance(veri, dict):
+            for k, v in veri.items():
+                if isinstance(v, list): return v
+            return [veri]
+        return veri
+    except:
         try:
-            return json.loads(metin)
-        except Exception:
-            return ast.literal_eval(metin)
+            # En son çare (Yedek Paraşüt): Python AST ile okuma
+            veri = ast.literal_eval(temiz)
+            if isinstance(veri, dict):
+                for k, v in veri.items():
+                    if isinstance(v, list): return v
+                return [veri]
+            return veri
+        except:
+            # Hiçbiri olmazsa sistemi çökertmek yerine sahte hata verisi döner
+            return [{"ad": "⚠️ Anlaşılamadı (Manuel Ekleyin)", "kalori": 0, "p": 0, "c": 0, "y": 0}]
 
 def gorsel_ilerleme(gercek_oran):
-    """Küçük adımları büyük gösteren motivasyon barı (En az %5)"""
     if gercek_oran <= 0: return 0.0
     return max(0.05, min(gercek_oran, 1.0))
 
@@ -109,11 +130,10 @@ def gorsel_ilerleme(gercek_oran):
 API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
-# AI SADECE JSON VERECEK ŞEKİLDE KİLİTLENDİ + KELİME SINIRI ARTIRILDI
+# Detaylı ve hatasız düşünmesi için token limiti yüksek, sıcaklık düşük
 generation_config = genai.GenerationConfig(
-    max_output_tokens=2000, 
-    temperature=0.1, 
-    response_mime_type="application/json"
+    max_output_tokens=2500, 
+    temperature=0.1
 )
 
 try:
@@ -149,40 +169,32 @@ if st.session_state.aktif_kullanici is None:
         with tab_giris:
             giris_kadi = st.text_input("Kullanıcı Adı", key="login_kadi").strip().lower()
             giris_sifre = st.text_input("Şifre", type="password", key="login_sifre")
-            
             if st.button("Giriş Yap", use_container_width=True, type="primary"):
-                if giris_kadi == "admin":
-                    kullanici_doc = db_firestore.collection("hesaplar").document("admin").get()
-                    if not kullanici_doc.exists:
-                        db_firestore.collection("hesaplar").document("admin").set({"sifre": giris_sifre, "kayit_tarihi": str(datetime.date.today())})
-                        st.session_state.aktif_kullanici = "admin"; st.rerun()
-                    elif kullanici_doc.to_dict().get("sifre") == giris_sifre:
-                        st.session_state.aktif_kullanici = "admin"; st.rerun()
-                    else: st.error("Admin şifresi hatalı!")
-                else:
-                    kullanici_doc = db_firestore.collection("hesaplar").document(giris_kadi).get()
-                    if kullanici_doc.exists and kullanici_doc.to_dict().get("sifre") == giris_sifre:
-                        st.session_state.aktif_kullanici = giris_kadi; st.rerun()
-                    else: st.error("Kullanıcı adı veya şifre hatalı!")
+                k_id = "admin" if giris_kadi == "admin" else giris_kadi
+                kullanici_doc = db_firestore.collection("hesaplar").document(k_id).get()
+                if not kullanici_doc.exists and k_id == "admin":
+                    db_firestore.collection("hesaplar").document("admin").set({"sifre": giris_sifre, "kayit_tarihi": str(datetime.date.today())})
+                    st.session_state.aktif_kullanici = "admin"; st.rerun()
+                elif kullanici_doc.exists and kullanici_doc.to_dict().get("sifre") == giris_sifre:
+                    st.session_state.aktif_kullanici = k_id; st.rerun()
+                else: st.error("Kullanıcı adı veya şifre hatalı!")
                     
         with tab_kayit:
             kayit_kadi = st.text_input("Yeni Kullanıcı Adı", key="reg_kadi").strip().lower()
             kayit_sifre = st.text_input("Yeni Şifre", type="password", key="reg_sifre")
             kayit_sifre_tekrar = st.text_input("Şifreyi Tekrar Girin", type="password", key="reg_sifre2")
-            
             if st.button("Kayıt Ol", use_container_width=True):
                 if not kayit_kadi or not kayit_sifre: st.warning("Alanları doldurun.")
+                elif " " in kayit_kadi: st.error("Kullanıcı adında boşluk olamaz!")
                 elif kayit_sifre != kayit_sifre_tekrar: st.error("Şifreler eşleşmiyor!")
+                elif db_firestore.collection("hesaplar").document(kayit_kadi).get().exists: st.error("Bu kullanıcı adı alınmış!")
                 else:
-                    kullanici_ref = db_firestore.collection("hesaplar").document(kayit_kadi)
-                    if kullanici_ref.get().exists: st.error("Bu kullanıcı adı zaten alınmış!")
-                    else:
-                        bugun = str(datetime.date.today())
-                        kullanici_ref.set({"sifre": kayit_sifre, "kayit_tarihi": bugun})
-                        db_firestore.collection("kullanici_verileri").document(kayit_kadi).set({
-                            "profil": {"isim": kayit_kadi, "kayit_tarihi": bugun}, "gecmis": {}
-                        })
-                        st.success("Kayıt başarılı! Giriş yapabilirsiniz.")
+                    bugun = str(datetime.date.today())
+                    db_firestore.collection("hesaplar").document(kayit_kadi).set({"sifre": kayit_sifre, "kayit_tarihi": bugun})
+                    db_firestore.collection("kullanici_verileri").document(kayit_kadi).set({
+                        "profil": {"isim": kayit_kadi, "kayit_tarihi": bugun}, "gecmis": {}
+                    })
+                    st.success("Kayıt başarılı! Giriş yapabilirsiniz.")
 
 # ==========================================
 # 3. ANA UYGULAMA (YÖNLENDİRME)
@@ -199,36 +211,25 @@ else:
             st.markdown("<h3 style='text-align:center; margin-top:-20px;'>👑 Admin Paneli</h3>", unsafe_allow_html=True)
             st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
             if st.button("🚪 Çıkış Yap", use_container_width=True, type="primary"):
-                st.session_state.aktif_kullanici = None
-                st.rerun()
+                st.session_state.aktif_kullanici = None; st.rerun()
 
         st.markdown("<h2 style='text-align: center; color: #e74c3c;'>👑 Yönetici Paneli</h2>", unsafe_allow_html=True)
         st.divider()
-
-        st.markdown("### 🔍 Kullanıcı Ara")
-        arama_metni = st.text_input("Aramak istediğiniz kullanıcı adını veya ismi yazın...", placeholder="Örn: ali veya ruthanly").strip().lower()
+        arama_metni = st.text_input("🔍 Kullanıcı Ara", placeholder="Örn: ali veya ruthanly").strip().lower()
         st.write("")
 
-        st.markdown("### 👥 Kayıtlı Kullanıcılar")
-        
         hesaplar = db_firestore.collection("hesaplar").stream()
-        bulunan_sayisi = 0
-        
         for hesap in hesaplar:
             kadi = hesap.id
             if kadi == "admin": continue
                 
             veri_doc = db_firestore.collection("kullanici_verileri").document(kadi).get()
             u_data = veri_doc.to_dict() if veri_doc.exists else {}
-            profil = u_data.get("profil", {})
-            gecmis = u_data.get("gecmis", {})
-            
+            profil, gecmis = u_data.get("profil", {}), u_data.get("gecmis", {})
             isim = profil.get("isim", kadi)
             
-            if arama_metni and (arama_metni not in kadi.lower() and arama_metni not in isim.lower()):
-                continue
+            if arama_metni and (arama_metni not in kadi.lower() and arama_metni not in isim.lower()): continue
                 
-            bulunan_sayisi += 1
             sifre_text = hesap.to_dict().get("sifre", "Bilinmiyor")
             kayit_tarihi = hesap.to_dict().get("kayit_tarihi", "Bilinmiyor")
             
@@ -237,82 +238,47 @@ else:
             hedef = float(profil.get("hedef_kilo", 0))
             boy = int(profil.get("boy", 175))
             cinsiyet = profil.get("cinsiyet", "Bilinmiyor")
-            kayitli_gun = len(gecmis.keys())
             verilen = baslangic - kilo
+            vki = kilo / ((boy / 100) ** 2) if boy > 0 else 0
             
-            boy_m = boy / 100
-            vki = kilo / (boy_m ** 2) if boy_m > 0 else 0
-            
-            foto_b64 = profil.get("foto_base64", "")
-            
-            with st.expander(f"👤 {isim} (@{kadi})   |   ⚖️ Güncel: {kilo} kg   |   📅 Aktif: {kayitli_gun} Gün"):
+            with st.expander(f"👤 {isim} (@{kadi})   |   ⚖️ Güncel: {kilo} kg   |   📅 Aktif: {len(gecmis.keys())} Gün"):
+                if profil.get("foto_base64"):
+                    pc, _ = st.columns([1, 8])
+                    pc.markdown(f'<img src="data:image/png;base64,{profil["foto_base64"]}" class="custom-pp" style="width:100%; border-radius:10px;">', unsafe_allow_html=True)
                 
-                if foto_b64:
-                    pp_col, info_col = st.columns([1, 8])
-                    pp_col.markdown(f'<img src="data:image/png;base64,{foto_b64}" class="custom-pp" style="width:100%; border-radius:10px;">', unsafe_allow_html=True)
-                
-                tab_detay, tab_ayar = st.tabs(["📊 Gelişmiş İstatistikler", "⚙️ Hesap Ayarları & İşlemler"])
-                
-                with tab_detay:
+                td, ta = st.tabs(["📊 Gelişmiş İstatistikler", "⚙️ Hesap Ayarları & İşlemler"])
+                with td:
                     d_c1, d_c2, d_c3, d_c4 = st.columns(4)
-                    d_c1.metric("Kayıt Tarihi", kayit_tarihi)
-                    d_c2.metric("Cinsiyet / Boy", f"{cinsiyet[:1]} - {boy} cm")
-                    d_c3.metric("Başlangıç Kilosu", f"{baslangic} kg")
-                    d_c4.metric("Güncel VKİ", f"{vki:.1f}")
-                    
+                    d_c1.metric("Kayıt Tarihi", kayit_tarihi); d_c2.metric("Cinsiyet / Boy", f"{cinsiyet[:1]} - {boy} cm")
+                    d_c3.metric("Başlangıç", f"{baslangic} kg"); d_c4.metric("VKİ", f"{vki:.1f}")
                     st.write("")
                     d_c5, d_c6, d_c7, d_c8 = st.columns(4)
                     d_c5.metric("Hedef Kilo", f"{hedef} kg")
-                    d_c6.metric("Verilen Kilo", f"{verilen:.1f} kg", delta=f"{-verilen:.1f} kg" if verilen > 0 else "0", delta_color="inverse")
-                    
+                    d_c6.metric("Verilen", f"{verilen:.1f} kg", delta=f"{-verilen:.1f} kg" if verilen > 0 else "0", delta_color="inverse")
                     if (baslangic - hedef) > 0:
-                        oran = max(0.0, min(verilen / (baslangic - hedef), 1.0))
-                        st.progress(gorsel_ilerleme(oran), text=f"Hedefe Ulaşma Oranı: %{oran * 100:.7f}")
+                        st.progress(gorsel_ilerleme(verilen/(baslangic-hedef)), text=f"Hedefe Ulaşma Oranı: %{(verilen/(baslangic-hedef)) * 100:.7f}")
 
-                with tab_ayar:
+                with ta:
                     a_c1, a_c2 = st.columns(2)
-                    
                     with a_c1:
-                        st.markdown("**🔐 Şifre Değiştir**")
                         yeni_sifre = st.text_input("Kullanıcının Yeni Şifresi", value=sifre_text, key=f"sif_{kadi}")
                         if st.button("Şifreyi Güncelle", key=f"btn_sif_{kadi}", use_container_width=True):
-                            db_firestore.collection("hesaplar").document(kadi).update({"sifre": yeni_sifre})
-                            st.success("Şifre başarıyla güncellendi!")
-                            st.rerun()
-                            
+                            db_firestore.collection("hesaplar").document(kadi).update({"sifre": yeni_sifre}); st.success("Güncellendi!"); st.rerun()
                     with a_c2:
-                        st.markdown("**🏷️ Kullanıcı Adı Değiştir**")
                         yeni_kadi = st.text_input("Yeni Kullanıcı Adı", value=kadi, key=f"kad_{kadi}")
                         if st.button("Kullanıcı Adını Değiştir", key=f"btn_kad_{kadi}", use_container_width=True):
-                            if yeni_kadi == kadi:
-                                st.warning("Mevcut kullanıcı adını girdiniz.")
-                            elif " " in yeni_kadi:
-                                st.error("Kullanıcı adında boşluk olamaz!")
+                            if db_firestore.collection("hesaplar").document(yeni_kadi).get().exists: st.error("Bu isim alınmış!")
                             else:
-                                hedef_ref = db_firestore.collection("hesaplar").document(yeni_kadi)
-                                if hedef_ref.get().exists:
-                                    st.error("Bu kullanıcı adı başka biri tarafından kullanılıyor!")
-                                else:
-                                    eski_hesap_veri = hesap.to_dict()
-                                    eski_hesap_veri["sifre"] = yeni_sifre
-                                    
-                                    db_firestore.collection("hesaplar").document(yeni_kadi).set(eski_hesap_veri)
-                                    db_firestore.collection("kullanici_verileri").document(yeni_kadi).set(u_data)
-                                    
-                                    db_firestore.collection("hesaplar").document(kadi).delete()
-                                    db_firestore.collection("kullanici_verileri").document(kadi).delete()
-                                    
-                                    st.success("Kullanıcı adı başarıyla değiştirildi ve veriler aktarıldı!")
-                                    st.rerun()
-                                    
+                                e_hesap = hesap.to_dict()
+                                e_hesap["sifre"] = yeni_sifre
+                                db_firestore.collection("hesaplar").document(yeni_kadi).set(e_hesap)
+                                db_firestore.collection("kullanici_verileri").document(yeni_kadi).set(u_data)
+                                db_firestore.collection("hesaplar").document(kadi).delete()
+                                db_firestore.collection("kullanici_verileri").document(kadi).delete()
+                                st.success("Değiştirildi!"); st.rerun()
                     st.divider()
                     if st.button("🔍 Kullanıcının Panelini İncele", key=f"view_{kadi}", type="primary", use_container_width=True):
-                        st.session_state.incelenen_kullanici = kadi
-                        st.session_state.panel_kapat = True
-                        st.rerun()
-
-        if bulunan_sayisi == 0:
-            st.info("Arama kriterlerinize uyan bir kullanıcı bulunamadı.")
+                        st.session_state.incelenen_kullanici = kadi; st.session_state.panel_kapat = True; st.rerun()
 
     # ---------------------------------------------------------
     # 3.2. KULLANICI (VEYA İNCELEME YAPAN ADMIN) GÖRÜNÜMÜ
@@ -323,76 +289,34 @@ else:
             is_admin_viewing = True
 
         doc_ref = db_firestore.collection("kullanici_verileri").document(kullanici_adi)
+        db = doc_ref.get().to_dict() if doc_ref.get().exists else {"profil": {"isim": kullanici_adi}, "gecmis": {}}
 
-        def verileri_yukle_bulut():
-            doc = doc_ref.get()
-            if doc.exists:
-                return doc.to_dict()
-            else:
-                bugun = str(datetime.date.today())
-                varsayilan = {
-                    "profil": {"isim": "Ali Kaan Tüfekçi" if kullanici_adi == "ruthanly" else kullanici_adi, "kayit_tarihi": bugun}, 
-                    "gecmis": {}
-                }
-                doc_ref.set(varsayilan)
-                return varsayilan
-
-        def verileri_kaydet_bulut(data):
-            if not is_admin_viewing:
-                doc_ref.set(data)
-
-        if 'db' not in st.session_state or st.session_state.get('db_user') != kullanici_adi:
-            st.session_state.db = verileri_yukle_bulut()
-            st.session_state.db_user = kullanici_adi
-            
-        db = st.session_state.db
+        def verileri_kaydet(data):
+            if not is_admin_viewing: doc_ref.set(data)
 
         def gunluk_toplam_guncelle(tarih):
             if not is_admin_viewing:
-                top_k = sum(ogun.get("toplam_kalori", 0) for ogun in db["gecmis"][tarih].get("ogünler", []))
-                top_p = sum(ogun.get("toplam_p", 0) for ogun in db["gecmis"][tarih].get("ogünler", []))
-                top_c = sum(ogun.get("toplam_c", 0) for ogun in db["gecmis"][tarih].get("ogünler", []))
-                top_y = sum(ogun.get("toplam_y", 0) for ogun in db["gecmis"][tarih].get("ogünler", []))
-                
-                db["gecmis"][tarih]["toplam"] = top_k
-                db["gecmis"][tarih]["toplam_p"] = top_p
-                db["gecmis"][tarih]["toplam_c"] = top_c
-                db["gecmis"][tarih]["toplam_y"] = top_y
-                verileri_kaydet_bulut(db)
+                db["gecmis"][tarih]["toplam"] = sum(o.get("toplam_kalori", 0) for o in db["gecmis"][tarih].get("ogünler", []))
+                db["gecmis"][tarih]["toplam_p"] = sum(o.get("toplam_p", 0) for o in db["gecmis"][tarih].get("ogünler", []))
+                db["gecmis"][tarih]["toplam_c"] = sum(o.get("toplam_c", 0) for o in db["gecmis"][tarih].get("ogünler", []))
+                db["gecmis"][tarih]["toplam_y"] = sum(o.get("toplam_y", 0) for o in db["gecmis"][tarih].get("ogünler", []))
+                verileri_kaydet(db)
 
-        # Temel Değişkenler ve Hesaplamalar
+        # Değişkenler
         p = db["profil"]
-
-        isim = p.get("isim", kullanici_adi)
-        kilo = float(p.get("kilo", p.get("baslangic_kilo", 80.0)))
-        boy = int(p.get("boy", 175))
-        cinsiyet = p.get("cinsiyet", "Erkek")
-        baslangic = float(p.get("baslangic_kilo", 80.0))
-        hedef_kilo = float(p.get("hedef_kilo", 70.0))
+        isim, kilo = p.get("isim", kullanici_adi), float(p.get("kilo", p.get("baslangic_kilo", 80.0)))
+        boy, cinsiyet = int(p.get("boy", 175)), p.get("cinsiyet", "Erkek")
+        baslangic, hedef_kilo = float(p.get("baslangic_kilo", 80.0)), float(p.get("hedef_kilo", 70.0))
         hedef_gun = int(p.get("hedef_gun", 30))
 
         try: dt_val = datetime.datetime.strptime(p.get("dogum_tarihi", "2000-01-01"), "%Y-%m-%d").date()
         except: dt_val = datetime.date(2000, 1, 1)
-        today = datetime.date.today()
-        yas = today.year - dt_val.year - ((today.month, today.day) < (dt_val.month, dt_val.day))
+        yas = datetime.date.today().year - dt_val.year - ((datetime.date.today().month, datetime.date.today().day) < (dt_val.month, dt_val.day))
 
         verilen_kilo = baslangic - kilo
-        toplam_verilecek = kilo - hedef_kilo
-
-        bmr = (10 * kilo) + (6.25 * boy) - (5 * yas) + (5 if cinsiyet == "Erkek" else -161)
-        tdee = bmr * 1.3 
-
-        hedef_toplam_acik = 0
-        if toplam_verilecek > 0 and hedef_gun > 0:
-            orijinal_gunluk_limit = int(tdee - ((toplam_verilecek * 7700) / hedef_gun))
-            acik_olusturma = int(tdee - orijinal_gunluk_limit)
-            hedef_toplam_acik = toplam_verilecek * 7700
-        else:
-            orijinal_gunluk_limit = int(tdee)
-            acik_olusturma = 0
-
-        hedef_su_litre = round(kilo * 0.035, 1)
-        hedef_protein = int(kilo * 1.8)
+        tdee = ((10 * kilo) + (6.25 * boy) - (5 * yas) + (5 if cinsiyet == "Erkek" else -161)) * 1.3 
+        orijinal_gunluk_limit = int(tdee - (((baslangic - hedef_kilo) * 7700) / hedef_gun)) if hedef_gun > 0 else int(tdee)
+        hedef_su_litre, hedef_protein = round(kilo * 0.035, 1), int(kilo * 1.8)
         hedef_yag = int((orijinal_gunluk_limit * 0.25) / 9) 
         hedef_karb = int((orijinal_gunluk_limit - (hedef_protein * 4) - (hedef_yag * 9)) / 4)
 
@@ -400,208 +324,138 @@ else:
         with st.sidebar:
             if is_admin_viewing:
                 if st.button("⬅️ Admin Paneline Dön", type="primary", use_container_width=True):
-                    st.session_state.incelenen_kullanici = None
-                    st.session_state.panel_kapat = True
-                    st.rerun()
-                st.write("---")
-
-            foto_b64_user = p.get("foto_base64", "")
-            if foto_b64_user:
-                st.markdown(f'<div style="text-align:center;"><img src="data:image/png;base64,{foto_b64_user}" class="custom-pp" style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:3px solid #2ecc71;"></div>', unsafe_allow_html=True)
-            
+                    st.session_state.incelenen_kullanici = None; st.session_state.panel_kapat = True; st.rerun()
+            if p.get("foto_base64"):
+                st.markdown(f'<div style="text-align:center;"><img src="data:image/png;base64,{p["foto_base64"]}" class="custom-pp" style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:3px solid #2ecc71;"></div>', unsafe_allow_html=True)
             st.markdown(f"<h3 style='text-align:center; margin-top:10px;'>{isim}</h3>", unsafe_allow_html=True)
             
             if not is_admin_viewing:
-                col_y_1, col_y_2 = st.columns(2)
-                if col_y_1.button("⚙️ Ayarlar", use_container_width=True): 
-                    st.session_state.aktif_sayfa = "Hesap Ayarları"
-                    st.session_state.panel_kapat = True
-                    st.rerun()
-                if col_y_2.button("🚪 Çıkış", use_container_width=True, type="primary"): 
-                    st.session_state.aktif_kullanici = None
-                    st.rerun()
+                c_sb1, c_sb2 = st.columns(2)
+                if c_sb1.button("⚙️ Ayarlar", use_container_width=True): st.session_state.aktif_sayfa = "Hesap Ayarları"; st.session_state.panel_kapat = True; st.rerun()
+                if c_sb2.button("🚪 Çıkış", use_container_width=True, type="primary"): st.session_state.aktif_kullanici = None; st.rerun()
 
             st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
             
             def profil_kaydet(k, v_key):
                 if not is_admin_viewing:
-                    v = st.session_state[v_key]
-                    db["profil"][k] = str(v) if isinstance(v, datetime.date) else v
-                    if k == "kilo": db["profil"]["son_kilo_guncelleme"] = str(datetime.date.today())
-                    if k == "baslangic_kilo" and "son_kilo_guncelleme" not in db["profil"]:
-                        db["profil"]["son_kilo_guncelleme"] = str(datetime.date.today())
-                    verileri_kaydet_bulut(db)
+                    db["profil"][k] = str(st.session_state[v_key]) if isinstance(st.session_state[v_key], datetime.date) else st.session_state[v_key]
+                    if k in ["kilo", "baslangic_kilo"]: db["profil"]["son_kilo_guncelleme"] = str(datetime.date.today())
+                    verileri_kaydet(db)
                 
             def profil_sil(k):
-                if not is_admin_viewing:
-                    if k in db["profil"]:
-                        del db["profil"][k]
-                        verileri_kaydet_bulut(db)
-            
-            def hizala(): st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+                if not is_admin_viewing and k in db["profil"]: del db["profil"][k]; verileri_kaydet(db)
 
             with st.expander("👤 Kişisel Bilgiler", expanded=False):
                 c1, c2 = st.columns([5,2])
                 c1.text_input("İsim", p.get("isim", kullanici_adi), key="w_isim", on_change=profil_kaydet, args=("isim", "w_isim"), disabled=is_admin_viewing)
-                with c2: 
-                    hizala()
-                    if not is_admin_viewing and st.button("🗑️", key="del_isim", use_container_width=True): profil_sil("isim"); st.rerun()
-
+                with c2: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); st.button("🗑️", key="del_isim", on_click=profil_sil, args=("isim",), disabled=is_admin_viewing)
+                
                 c1, c2 = st.columns([5,2])
                 c1.selectbox("Cinsiyet", ["Erkek", "Kadın"], index=0 if p.get("cinsiyet", "Erkek") == "Erkek" else 1, key="w_cins", on_change=profil_kaydet, args=("cinsiyet", "w_cins"), disabled=is_admin_viewing)
-                with c2: 
-                    hizala()
-                    if not is_admin_viewing and st.button("🗑️", key="del_cins", use_container_width=True): profil_sil("cinsiyet"); st.rerun()
+                with c2: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); st.button("🗑️", key="del_cins", on_click=profil_sil, args=("cinsiyet",), disabled=is_admin_viewing)
                 
                 c1, c2 = st.columns([5,2])
                 c1.date_input("Doğum Tarihi", dt_val, min_value=datetime.date(1940,1,1), key="w_dt", on_change=profil_kaydet, args=("dogum_tarihi", "w_dt"), disabled=is_admin_viewing)
-                with c2:
-                    hizala()
-                    if not is_admin_viewing and st.button("🗑️", key="del_dt", use_container_width=True): profil_sil("dogum_tarihi"); st.rerun()
-                    
-                st.markdown(f"<div style='font-size: 13px; color: gray; margin-top: -10px; margin-bottom: 10px;'>Yaşınız: {yas}</div>", unsafe_allow_html=True)
+                with c2: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); st.button("🗑️", key="del_dt", on_click=profil_sil, args=("dogum_tarihi",), disabled=is_admin_viewing)
+                
+                c1, c2 = st.columns([5,2])
+                c1.number_input("Boy (cm)", 100, 250, boy, key="w_boy", on_change=profil_kaydet, args=("boy", "w_boy"), disabled=is_admin_viewing)
+                with c2: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); st.button("🗑️", key="del_boy", on_click=profil_sil, args=("boy",), disabled=is_admin_viewing)
 
                 c1, c2 = st.columns([5,2])
-                c1.number_input("Boy (cm)", 100, 250, int(p.get("boy", 175)), key="w_boy", on_change=profil_kaydet, args=("boy", "w_boy"), disabled=is_admin_viewing)
-                with c2:
-                    hizala()
-                    if not is_admin_viewing and st.button("🗑️", key="del_boy", use_container_width=True): profil_sil("boy"); st.rerun()
-
-                c1, c2 = st.columns([5,2])
-                c1.number_input("Başlangıç Kilosu (kg)", 30.0, 250.0, float(p.get("baslangic_kilo", 80.0)), step=0.5, key="w_bk", on_change=profil_kaydet, args=("baslangic_kilo", "w_bk"), disabled=is_admin_viewing)
-                with c2:
-                    hizala()
-                    if not is_admin_viewing and st.button("🗑️", key="del_bk", use_container_width=True): profil_sil("baslangic_kilo"); st.rerun()
+                c1.number_input("Başlangıç Kilosu (kg)", 30.0, 250.0, baslangic, step=0.5, key="w_bk", on_change=profil_kaydet, args=("baslangic_kilo", "w_bk"), disabled=is_admin_viewing)
+                with c2: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); st.button("🗑️", key="del_bk", on_click=profil_sil, args=("baslangic_kilo",), disabled=is_admin_viewing)
 
             # 10 Günlük Kilo Takibi Mantığı
-            son_tarih_str = p.get("son_kilo_guncelleme", "")
-            if not son_tarih_str:
-                hesap_doc = db_firestore.collection("hesaplar").document(kullanici_adi).get()
-                if hesap_doc.exists: son_tarih_str = hesap_doc.to_dict().get("kayit_tarihi", "")
-                if not son_tarih_str: son_tarih_str = str(datetime.date.today())
-
+            son_tarih_str = p.get("son_kilo_guncelleme", p.get("kayit_tarihi", str(datetime.date.today())))
             try:
-                gun_farki = (datetime.date.today() - datetime.datetime.strptime(son_tarih_str, "%Y-%m-%d").date()).days
-                kilo_acik = True if gun_farki >= 10 else False
+                kilo_acik = (datetime.date.today() - datetime.datetime.strptime(son_tarih_str, "%Y-%m-%d").date()).days >= 10
             except: kilo_acik = False
 
             with st.expander("⚖️ Güncel Kilo Takibi", expanded=kilo_acik):
                 if kilo_acik: st.warning("Kilonuzu güncelleme vaktiniz geldi!")
-                st.markdown(f"<small style='color:gray;'>Başlangıç Kilonuz: <b>{baslangic} kg</b></small>", unsafe_allow_html=True)
-                yeni_gkilo = st.number_input("Güncel Kilo (kg)", 30.0, 250.0, kilo, step=0.5, key="w_gk", disabled=is_admin_viewing)
-                
+                st.number_input("Güncel Kilo (kg)", 30.0, 250.0, kilo, step=0.5, key="w_gk", on_change=profil_kaydet, args=("kilo", "w_gk"), disabled=is_admin_viewing)
                 if not is_admin_viewing:
-                    col_btn1, col_btn2 = st.columns(2)
-                    if col_btn1.button("🔄 Sıfırla", use_container_width=True):
-                        profil_sil("kilo"); profil_sil("son_kilo_guncelleme"); st.rerun()
-                    if col_btn2.button("💾 Kaydet", use_container_width=True, type="primary"):
-                        db["profil"]["kilo"] = yeni_gkilo
-                        db["profil"]["son_kilo_guncelleme"] = str(datetime.date.today())
-                        doc_ref.set(db); st.success("Güncellendi!"); st.rerun()
+                    cb1, cb2 = st.columns(2)
+                    if cb1.button("🔄 Sıfırla", use_container_width=True): profil_sil("kilo"); profil_sil("son_kilo_guncelleme"); st.rerun()
+                    if cb2.button("💾 Kaydet", use_container_width=True, type="primary"): db["profil"]["son_kilo_guncelleme"] = str(datetime.date.today()); verileri_kaydet(db); st.success("Kaydedildi!"); st.rerun()
 
             with st.expander("🎯 Hedeflerim", expanded=False):
                 c1, c2 = st.columns([5,2])
-                c1.number_input("Hedef Kilo (kg)", 30.0, 200.0, float(p.get("hedef_kilo", 70.0)), step=0.5, key="w_hk", on_change=profil_kaydet, args=("hedef_kilo", "w_hk"), disabled=is_admin_viewing)
-                with c2:
-                    hizala()
-                    if not is_admin_viewing and st.button("🗑️", key="del_hk", use_container_width=True): profil_sil("hedef_kilo"); st.rerun()
+                c1.number_input("Hedef Kilo (kg)", 30.0, 200.0, hedef_kilo, step=0.5, key="w_hk", on_change=profil_kaydet, args=("hedef_kilo", "w_hk"), disabled=is_admin_viewing)
+                with c2: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); st.button("🗑️", key="del_hk", on_click=profil_sil, args=("hedef_kilo",), disabled=is_admin_viewing)
 
                 c1, c2 = st.columns([5,2])
-                c1.number_input("Hedef Süre (Gün)", 1, 730, int(p.get("hedef_gun", 30)), key="w_hg", on_change=profil_kaydet, args=("hedef_gun", "w_hg"), disabled=is_admin_viewing)
-                with c2:
-                    hizala()
-                    if not is_admin_viewing and st.button("🗑️", key="del_hg", use_container_width=True): profil_sil("hedef_gun"); st.rerun()
+                c1.number_input("Hedef Süre (Gün)", 1, 730, hedef_gun, key="w_hg", on_change=profil_kaydet, args=("hedef_gun", "w_hg"), disabled=is_admin_viewing)
+                with c2: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); st.button("🗑️", key="del_hg", on_click=profil_sil, args=("hedef_gun",), disabled=is_admin_viewing)
 
             st.divider()
-            st.markdown("### 🧬 Metabolik Detaylar")
-            st.markdown(f"""
-            <div style="background-color: #262730; padding: 15px; border-radius: 10px; font-size: 14px; line-height: 1.6;">
-                <span style="color:#bdc3c7;">Bazal Metabolizma (BMR):</span> <b style="color:#2ecc71; float:right;">{int(bmr)} kcal</b><br>
-                <span style="color:#bdc3c7;">Kilo Koruma Kalorisi:</span> <b style="color:#f1c40f; float:right;">{int(tdee)} kcal</b><br>
-                <span style="color:#bdc3c7;">Hedef İçin Max Kalori:</span> <b style="color:#e74c3c; float:right;">{int(orijinal_gunluk_limit)} kcal</b><br>
-                <hr style="margin: 8px 0; border-color: #3b3c45;">
-                <span style="color:#bdc3c7;">Gereken Günlük Açık:</span> <b style="color:#3498db; float:right;">{acik_olusturma} kcal</b>
-            </div>
-            """, unsafe_allow_html=True)
-
-            st.divider()
-            st.markdown("### 🏆 Başarı Merkezi")
             toplam_acik_panel = sum(max(0, int(tdee) - (v.get("toplam", 0) - v.get("yakilan_kalori", 0))) for v in db["gecmis"].values() if v.get("toplam", 0) > 0)
-            ilerleme_orani = max(0.0, min(toplam_acik_panel / hedef_toplam_acik, 1.0)) if hedef_toplam_acik > 0 else 0.0
+            ilerleme_orani = max(0.0, min(toplam_acik_panel / ((baslangic-hedef_kilo)*7700), 1.0)) if (baslangic-hedef_kilo) > 0 else 0.0
             
+            st.markdown("### 🏆 Başarı Merkezi")
             m_c1, m_c2 = st.columns(2)
             m_c1.metric("Verilen", f"{verilen_kilo:.1f} kg")
             m_c2.metric("Kalan", f"{toplam_verilecek:.1f} kg")
             st.progress(gorsel_ilerleme(ilerleme_orani), text=f"Hedefe Ulaşma: %{ilerleme_orani * 100:.7f}")
 
         # --- SAYFA İÇERİĞİ YÖNLENDİRMELERİ ---
-        if is_admin_viewing:
-            st.warning(f"👁️ ŞU AN İZLEME MODUNDASINIZ: Kullanıcı **{kullanici_adi}** paneli görüntüleniyor. Değiştirme butonları gizlenmiştir.")
+        if is_admin_viewing: st.warning(f"👁️ İZLEME MODU: Kullanıcı **{kullanici_adi}** paneli görüntüleniyor.")
 
         if st.session_state.aktif_sayfa == "Hesap Ayarları":
-            if st.session_state.get("hesap_guncellendi_mesaji"):
-                st.success(st.session_state.hesap_guncellendi_mesaji)
-                st.warning("Güvenliğiniz için çıkış yapıldı. Lütfen yeni bilgilerinizle giriş yapın.")
-                if st.button("Giriş Ekranına Dön", type="primary", use_container_width=True):
-                    st.session_state.aktif_kullanici = None
-                    st.session_state.hesap_guncellendi_mesaji = None
-                    st.session_state.aktif_sayfa = "📅 Günlük Takip"
-                    st.rerun()
-                st.stop() 
-
             if st.button("⬅️ Ana Menüye Dön"): st.session_state.aktif_sayfa = "📅 Günlük Takip"; st.rerun()
             st.title("⚙️ Hesap Yönetimi")
             
             if is_admin_viewing: st.error("Admin olarak bu işlemi yapamazsınız.")
             else:
                 tab_h1, tab_h2, tab_h3 = st.tabs(["📸 Fotoğraf", "🔐 Şifre", "🏷️ Kullanıcı Adı"])
-                
                 with tab_h1:
-                    uploaded_pp = st.file_uploader("Profil Fotoğrafı Seç", type=["jpg", "png", "jpeg"])
-                    if uploaded_pp and st.button("💾 Fotoğrafı Kaydet", use_container_width=True, type="primary"):
-                        img = Image.open(uploaded_pp); img.thumbnail((250, 250))
+                    up_pp = st.file_uploader("Fotoğraf Seç (JPG/PNG)", type=["png", "jpg", "jpeg"])
+                    if up_pp and st.button("💾 Kaydet", use_container_width=True, type="primary"):
+                        img = Image.open(up_pp); img.thumbnail((250, 250))
                         buf = io.BytesIO(); img.save(buf, format="PNG")
                         db["profil"]["foto_base64"] = base64.b64encode(buf.getvalue()).decode()
-                        doc_ref.set(db); st.success("Güncellendi!"); st.rerun()
-                    if f_b64 and st.button("🗑️ Mevcut Fotoğrafı Kaldır", use_container_width=True):
-                        del db["profil"]["foto_base64"]; doc_ref.set(db); st.rerun()
+                        verileri_kaydet(db); st.success("Güncellendi!"); st.rerun()
+                    if p.get("foto_base64") and st.button("🗑️ Kaldır", use_container_width=True):
+                        del db["profil"]["foto_base64"]; verileri_kaydet(db); st.rerun()
 
                 with tab_h2:
                     s1 = st.text_input("Mevcut Şifre", type="password")
                     s2 = st.text_input("Yeni Şifre", type="password")
                     s3 = st.text_input("Yeni Şifre (Tekrar)", type="password")
-                    if st.button("🔐 Şifremi Güncelle", use_container_width=True):
+                    if st.button("🔐 Şifreyi Güncelle", use_container_width=True):
                         g_sif = db_firestore.collection("hesaplar").document(kullanici_adi).get().to_dict().get("sifre", "")
-                        if s1 != g_sif: st.error("Mevcut şifre yanlış!")
-                        elif not s2 or s2 != s3: st.error("Yeni şifreler eşleşmiyor veya boş!")
+                        if s1 != g_sif: st.error("Şifre yanlış!")
+                        elif not s2 or s2 != s3: st.error("Yeni şifreler eşleşmiyor!")
                         else:
                             db_firestore.collection("hesaplar").document(kullanici_adi).update({"sifre": s2})
-                            st.session_state.hesap_guncellendi_mesaji = "Şifreniz değiştirildi!"; st.rerun()
+                            st.session_state.aktif_kullanici = None; st.success("Değiştirildi! Tekrar giriş yapın."); st.rerun()
 
                 with tab_h3:
                     k1 = st.text_input("Mevcut Kullanıcı Adı").strip().lower()
                     k2 = st.text_input("Yeni Kullanıcı Adı").strip().lower()
-                    k3 = st.text_input("Yeni Kullanıcı Adı (Tekrar)").strip().lower()
-                    if st.button("🏷️ Kullanıcı Adımı Güncelle", use_container_width=True):
-                        if k1 != kullanici_adi: st.error("Mevcut kullanıcı adı yanlış!")
-                        elif " " in k2 or not k2: st.error("Hatalı veya boş yeni kullanıcı adı!")
-                        elif k2 != k3: st.error("Yeni adlar eşleşmiyor!")
-                        elif db_firestore.collection("hesaplar").document(k2).get().exists: st.error("Bu isim alınmış!")
+                    k3 = st.text_input("Yeni Ad (Tekrar)").strip().lower()
+                    if st.button("🏷️ Kullanıcı Adını Güncelle", use_container_width=True):
+                        if k1 != kullanici_adi: st.error("Ad yanlış!")
+                        elif " " in k2 or not k2: st.error("Boşluk olamaz!")
+                        elif k2 != k3: st.error("Eşleşmiyor!")
+                        elif db_firestore.collection("hesaplar").document(k2).get().exists: st.error("Alınmış!")
                         else:
                             e_veri = db_firestore.collection("hesaplar").document(kullanici_adi).get().to_dict()
                             db_firestore.collection("hesaplar").document(k2).set(e_veri)
                             db_firestore.collection("kullanici_verileri").document(k2).set(db)
                             db_firestore.collection("hesaplar").document(kullanici_adi).delete()
                             db_firestore.collection("kullanici_verileri").document(kullanici_adi).delete()
-                            st.session_state.hesap_guncellendi_mesaji = "Kullanıcı adınız değiştirildi!"; st.rerun()
+                            st.session_state.aktif_kullanici = None; st.success("Değiştirildi! Tekrar giriş yapın."); st.rerun()
 
+        # ANA İŞLEM SAYFALARI (TAKİP VE KOÇLUK)
         else:
             st.radio("Menü:", ["📅 Günlük Takip", "🤖 Koçluk Merkezi"], key="aktif_sayfa", horizontal=True, label_visibility="collapsed")
             
             if st.session_state.aktif_sayfa == "📅 Günlük Takip":
                 if 'secili_tarih' not in st.session_state: st.session_state.secili_tarih = datetime.date.today()
 
-                # --- TARİH KUTUSU ---
+                # TARİH KUTUSU
                 with st.container(border=True):
                     col_b1, col_t, col_b2, col_b3 = st.columns([1.2, 2, 1.2, 1.2])
                     with col_b1:
@@ -622,17 +476,16 @@ else:
                 if islem_tarihi not in db["gecmis"]: 
                     db["gecmis"][islem_tarihi] = {"toplam": 0, "toplam_p": 0, "toplam_c": 0, "toplam_y": 0, "ogünler": [], "su_litre": 0.0, "egzersizler": [], "yakilan_kalori": 0}
                     db["gecmis"][islem_tarihi]["su_hedef"] = hedef_su_litre
-                    verileri_kaydet_bulut(db)
+                    verileri_kaydet(db)
 
-                # Dünkü Kaçamak Hesabı
+                # Dünkü Kaçamak Bildirimi
                 dun_str = str(st.session_state.secili_tarih - datetime.timedelta(days=1))
                 gunluk_limit = orijinal_gunluk_limit 
                 
                 if dun_str in db["gecmis"]:
                     dun_v = db["gecmis"][dun_str]
                     dun_su, dun_hedef_su = dun_v.get("su_litre", 0), dun_v.get("su_hedef", 2.5)
-                    if dun_su < dun_hedef_su:
-                        st.warning(f"💧 **Dünkü Su Eksikliği:** Hedeflenen suyu tamamlayamadın ({dun_su}L / {dun_hedef_su}L).")
+                    if dun_su < dun_hedef_su: st.warning(f"💧 Dün suyu tamamlayamadın ({dun_su}L / {dun_hedef_su}L).")
                     
                     dun_net = max(0, dun_v.get("toplam", 0) - dun_v.get("yakilan_kalori", 0))
                     if dun_v.get("toplam", 0) > 0: 
@@ -640,16 +493,11 @@ else:
                         if fark > 0:
                             telafi = fark // 3
                             gunluk_limit = orijinal_gunluk_limit - telafi 
-                            st.warning(f"⚖️ **Dünkü Kaçamak:** Hedefini **{fark} kcal** aştın. Bugünkü hedeften **{telafi} kcal** kısıldı.")
-                        elif fark <= 0:
-                            st.success(f"🎉 **Harika İş Çıkardın:** Dün hedefine tam sadık kaldın ve fazladan açık yarattın!")
+                            st.warning(f"⚖️ Dün hedefini **{fark} kcal** aştın. Bugünkü hedeften **{telafi} kcal** kısıldı.")
 
-                # --- UX MİMARİSİ: ALT SEKMELER (TABS) ---
+                # ALT SEKMELER
                 tab_ekle, tab_ozet, tab_egzersiz = st.tabs(["🍽️ Yiyecek Ekle & Menü", "📊 Günlük Özet & Su", "🏃 Egzersiz"])
 
-                # ===============================================
-                # TAB 1: YİYECEK EKLE & MENÜ
-                # ===============================================
                 with tab_ekle:
                     if not is_admin_viewing:
                         with st.container(border=True):
@@ -662,18 +510,17 @@ else:
 
                             if st.session_state.onay_bekleyen_metin:
                                 st.warning(f"🤖 AI {st.session_state.kaydedilecek_ogun_tipi} makrolarını hesapladı. Onaylıyor musun?")
-                                st.info(st.session_state.onay_bekleyen_metin.replace('\n', '\n\n'))
+                                st.info(st.session_state.onay_bekleyen_metin)
                                 c_evet, c_hayir = st.columns(2)
                                 
                                 if c_evet.button("✅ Evet (Tabağa Ekle)", use_container_width=True, type="primary"):
                                     ogun_tipi = st.session_state.kaydedilecek_ogun_tipi
                                     json_v = st.session_state.json_veri
                                     
-                                    # AKILLI BİRLEŞTİRME (SMART MERGE): Öğün zaten varsa içine ekle
+                                    # AKILLI BİRLEŞTİRME (Smart Merge)
                                     mevcut_idx = -1
                                     for i, ogun in enumerate(db["gecmis"][islem_tarihi]["ogünler"]):
-                                        if ogun["tip"] == ogun_tipi:
-                                            mevcut_idx = i; break
+                                        if ogun["tip"] == ogun_tipi: mevcut_idx = i; break
                                     
                                     t_kcal = sum(x.get('kalori',0) for x in json_v)
                                     t_p = sum(x.get('p',0) for x in json_v)
@@ -687,11 +534,10 @@ else:
                                         db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_c"] += t_c
                                         db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_y"] += t_y
                                     else:
-                                        yeni_ogun = {
+                                        db["gecmis"][islem_tarihi]["ogünler"].append({
                                             "tip": ogun_tipi, "kalemler": json_v, 
                                             "toplam_kalori": t_kcal, "toplam_p": t_p, "toplam_c": t_c, "toplam_y": t_y
-                                        }
-                                        db["gecmis"][islem_tarihi]["ogünler"].append(yeni_ogun)
+                                        })
                                         
                                     gunluk_toplam_guncelle(islem_tarihi) 
                                     st.session_state.tabak_listesi = []; st.session_state.onay_bekleyen_metin = None; st.session_state.json_veri = []; st.rerun()
@@ -707,15 +553,9 @@ else:
                                     sec_ymk = st.selectbox("Arayın veya Seçin:", ["✍️ Listede Yok, Kendim Yazacağım"] + sorted(YAYGIN_YEMEKLER))
                                     y_adi = st.text_input("Ne yedin?", placeholder="Örn: Ev yapımı kek", label_visibility="collapsed") if sec_ymk == "✍️ Listede Yok, Kendim Yazacağım" else sec_ymk
                                     
-                                    b_sozlugu = {"çorba": ["kase", "kepçe"], "su": ["bardak", "şişe"], "ekmek": ["dilim"], "pilav": ["porsiyon", "kaşık"], "et": ["gram", "porsiyon"]}
-                                    a_birimler = ["porsiyon", "adet", "dilim", "kase", "bardak", "gram", "yemek kaşığı", "avuç", "kepçe", "bütün"]
-                                    if y_adi:
-                                        for k, bl in b_sozlugu.items():
-                                            if k in y_adi.lower(): a_birimler = bl + [b for b in a_birimler if b not in bl]; break 
-                                    
                                     cm, cb = st.columns(2)
                                     ymk_mik = cm.number_input("Miktar", 0.01, 1000.0, 1.0, 0.5)
-                                    ymk_brm = cb.selectbox("Birim", a_birimler)
+                                    ymk_brm = cb.selectbox("Birim", ["porsiyon", "adet", "dilim", "kase", "bardak", "gram", "yemek kaşığı", "avuç"])
                                     
                                     if st.button("➕ Tabağa Ekle", use_container_width=True) and y_adi:
                                         st.session_state.tabak_listesi.append(f"{ymk_mik} {ymk_brm} {y_adi}"); st.rerun()
@@ -729,17 +569,14 @@ else:
                                                 
                                         if st.button("🚀 Tabağı İncele ve Hesapla", type="primary", use_container_width=True):
                                             st.session_state.kaydedilecek_ogun_tipi = ogun_tipi
-                                            with st.spinner("AI hesaplıyor..."):
+                                            with st.spinner("AI dikkatlice hesaplıyor..."):
                                                 prompt = f"""Kullanıcı yediği menü: {", ".join(st.session_state.tabak_listesi)}. 
-                                                Tüm yiyeceklerin kalori, Protein(p), Karb(c), Yağ(y) değerlerini hesapla.
-                                                SADECE AŞAĞIDAKİ GİBİ BİR JSON DİZİSİ (ARRAY) OLARAK YANIT VER.
-                                                Örnek Format:
-                                                [
-                                                  {{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}
-                                                ]"""
+                                                Tüm yiyeceklerin kalori, Protein(p), Karb(c), Yağ(y) değerlerini TAM SAYI hesapla.
+                                                SADECE VE SADECE JSON DİZİSİ OLARAK YANIT VER.
+                                                Örnek Format: [{{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}]"""
                                                 
                                                 res = model.generate_content(prompt)
-                                                v_list = json_kurtar(res.text)
+                                                v_list = guvenli_json_oku(res.text)
                                                 
                                                 metin = ""
                                                 for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
@@ -753,30 +590,29 @@ else:
                                     st.info("📸 Fotoğrafı yükle, gerisini AI halletsin!")
                                     foto_ogun = st.selectbox("Öğün Seç", ["Kahvaltı", "Öğle Yemeği", "Akşam Yemeği", "Ara Öğün", "Atıştırmalık"])
                                     yuklenen = st.file_uploader("Fotoğraf Seç", type=["jpg", "jpeg", "png"])
-                                    ipucu = st.text_input("💡 Yemeğin ne olduğunu biliyor musun?", placeholder="Örn: Fırın makarna")
+                                    ipucu = st.text_input("💡 İpucu ver", placeholder="Örn: Fırın makarna")
                                     
                                     if yuklenen:
                                         img = Image.open(yuklenen)
                                         st.image(img, use_container_width=True)
-                                        if st.button("🚀 Analiz Et ve Hesapla", type="primary", use_container_width=True):
+                                        if st.button("🚀 Detaylı Analiz Et", type="primary", use_container_width=True):
                                             st.session_state.kaydedilecek_ogun_tipi = foto_ogun
-                                            with st.spinner("AI fotoğrafa bakıyor..."):
+                                            with st.spinner("AI fotoğrafı yavaş ve dikkatlice inceliyor..."):
                                                 img.thumbnail((512, 512), Image.Resampling.LANCZOS)
-                                                ek_b = f"Bu yemeğin '{ipucu}' olduğu belirtildi. " if ipucu else ""
+                                                ek_b = f"Kullanıcı bu yemeğin '{ipucu}' olduğunu belirtti. " if ipucu else ""
                                                 
                                                 # KARTAL GÖZÜ PROMPTU
-                                                prompt = f"""{ek_b}Fotoğraftaki TÜM yiyecekleri TEK TEK tespit et. Tabakta/Masada ne kadar farklı çeşit varsa hepsini ayrı ayrı bul. (Örn: Sadece yumurtayı bulup bırakma, yanındaki peyniri, zeytini, ekmeği de bul).
-                                                Her birinin porsiyon tahminini yap ve kalori, p, c, y değerlerini hesapla.
-                                                YANITINI SADECE VE SADECE AŞAĞIDAKİ GİBİ BİR JSON DİZİSİ OLARAK VER. Başka hiçbir şey yazma.
+                                                prompt = f"""{ek_b}Lütfen fotoğrafı DİKKATLİCE analiz et. Tabakta veya masada ne kadar FARKLI ÇEŞİT yiyecek/içecek varsa hepsini TEK TEK tespit et (Örn: Sadece kahvaltıyı bütün olarak yazma; yumurtayı, peyniri, çayı ayrı ayrı bul).
+                                                Her birinin porsiyon tahminini yap ve değerlerini hesapla.
+                                                SADECE VE SADECE JSON DİZİSİ OLARAK YANIT VER.
                                                 Örnek Format:
                                                 [
-                                                  {{"ad": "1 Adet Haşlanmış Yumurta", "kalori": 78, "p": 6, "c": 1, "y": 5}},
-                                                  {{"ad": "2 Dilim Beyaz Peynir", "kalori": 120, "p": 8, "c": 2, "y": 10}},
-                                                  {{"ad": "5 Adet Siyah Zeytin", "kalori": 40, "p": 0, "c": 1, "y": 4}}
+                                                  {{"ad": "1 Adet Yumurta", "kalori": 78, "p": 6, "c": 1, "y": 5}},
+                                                  {{"ad": "2 Dilim Peynir", "kalori": 120, "p": 8, "c": 2, "y": 10}}
                                                 ]"""
                                                 
                                                 res = model.generate_content([prompt, img])
-                                                v_list = json_kurtar(res.text)
+                                                v_list = guvenli_json_oku(res.text)
                                                 
                                                 metin = ""
                                                 for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
@@ -796,7 +632,7 @@ else:
                                     m_y = c4.number_input("Yağ", 0, 500, 0)
                                     
                                     if st.button("Listeye Ekle", use_container_width=True) and m_ad:
-                                        # AKILLI BİRLEŞTİRME MANUEL İÇİN
+                                        # Manuel Akıllı Birleştirme
                                         mevcut_idx = -1
                                         for i, ogun in enumerate(db["gecmis"][islem_tarihi]["ogünler"]):
                                             if ogun["tip"] == m_ogun: mevcut_idx = i; break
@@ -810,12 +646,10 @@ else:
                                             db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_c"] += m_c
                                             db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_y"] += m_y
                                         else:
-                                            yeni_ogun = {
+                                            db["gecmis"][islem_tarihi]["ogünler"].append({
                                                 "tip": m_ogun, "kalemler": [y_kalem], 
                                                 "toplam_kalori": m_k, "toplam_p": m_p, "toplam_c": m_c, "toplam_y": m_y
-                                            }
-                                            db["gecmis"][islem_tarihi]["ogünler"].append(yeni_ogun)
-                                            
+                                            })
                                         gunluk_toplam_guncelle(islem_tarihi); st.rerun()
 
                     with st.container(border=True):
@@ -841,9 +675,6 @@ else:
                                             if len(ogun["kalemler"]) == 0: gunluk_veri["ogünler"].pop(m_idx)
                                             gunluk_toplam_guncelle(islem_tarihi); st.rerun()
 
-                # ===============================================
-                # TAB 2: ÖZET & SU
-                # ===============================================
                 with tab_ozet:
                     with st.container(border=True):
                         col_ozet, col_su = st.columns([3, 2])
@@ -917,9 +748,6 @@ else:
                                     st.caption(f"Y: {gy}g"); st.progress(gy/(gp+gc+gy))
                             else: st.info("Henüz veri yok.")
 
-                # ===============================================
-                # TAB 3: EGZERSİZ
-                # ===============================================
                 with tab_egzersiz:
                     with st.container(border=True):
                         st.markdown("### 🏃 Egzersiz")
@@ -955,9 +783,6 @@ else:
                                     db["gecmis"][islem_tarihi]["egzersizler"].append({"ad": mx_ad, "sure": "Manuel", "kalori": mx_kal})
                                     db["gecmis"][islem_tarihi]["yakilan_kalori"] += mx_kal; doc_ref.set(db); st.rerun()
 
-            # ==========================================
-            # 4. KOÇLUK MERKEZİ SAYFASI
-            # ==========================================
             elif st.session_state.aktif_sayfa == "🤖 Koçluk Merkezi":
                 t_acik, t_gun = 0, 0
                 for v in db["gecmis"].values():
