@@ -1,8 +1,9 @@
 import streamlit as st
 import google.generativeai as genai
-import datetime
-import re
+from PIL import Image
 import json
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Firebase kütüphaneleri
 import firebase_admin
