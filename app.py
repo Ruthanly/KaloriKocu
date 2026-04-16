@@ -50,7 +50,8 @@ admin_kontrol()
 # ==========================================
 # 1. AYARLAR VE YAPAY ZEKA
 # ==========================================
-API_KEY = "AIzaSyC9LZqR3Ej8KPY_sccq3N2dfydw_9kQcf4"
+# Anahtarı doğrudan yazmak yerine Streamlit Secrets'tan güvenli bir şekilde çekiyoruz
+API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
 try:
