@@ -7,6 +7,7 @@ import re
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
+from PIL import Image
 
 try:
     import pandas as pd
