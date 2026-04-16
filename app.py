@@ -492,12 +492,11 @@ else:
         # ==========================================
 
         if aktif_sayfa == "📅 Günlük Takip":
-            
-            if 'secili_tarih' not in st.session_state:
+        
+        if 'secili_tarih' not in st.session_state:
             st.session_state.secili_tarih = datetime.date.today()
 
         with st.container(border=True):
-            # Sütun sayısını 4'e çıkardık ve genişlikleri butonların sığacağı şekilde ayarladık
             col_btn_geri, col_tarih, col_btn_bugun, col_btn_ileri = st.columns([1.2, 2, 1.2, 1.2])
             
             with col_btn_geri:
@@ -512,7 +511,6 @@ else:
                 
             with col_btn_bugun:
                 st.markdown("<br>", unsafe_allow_html=True)
-                # Sadece geçmiş bir tarihteysek "Bugüne Git" butonu çıksın/aktif olsun
                 if st.session_state.secili_tarih < datetime.date.today():
                     if st.button("🎯 Bugüne Git", type="primary", use_container_width=True):
                         st.session_state.secili_tarih = datetime.date.today()
