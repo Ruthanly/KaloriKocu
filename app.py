@@ -9,6 +9,7 @@ import datetime
 import io 
 import re 
 import base64
+import ast
 
 try:
     import pandas as pd
@@ -62,7 +63,7 @@ except ValueError:
 db_firestore = firestore.client()
 
 # ==========================================
-# YARDIMCI FONKSİYONLAR (RADAR JSON SİSTEMİ)
+# YARDIMCI FONKSİYONLAR (JSON & JS & DİĞER)
 # ==========================================
 if 'aktif_kullanici' not in st.session_state: st.session_state.aktif_kullanici = None
 if 'incelenen_kullanici' not in st.session_state: st.session_state.incelenen_kullanici = None
@@ -81,38 +82,21 @@ if st.session_state.panel_kapat:
     </script>""", height=0, width=0)
     st.session_state.panel_kapat = False
 
-def json_kurtar(metin):
-    """AI ne yaparsa yapsın, metnin içinden sadece JSON verisini cımbızlayan Avcı/Radar sistemi."""
+def json_temizle_ve_oku(metin):
+    """Yapay zekadan gelen metni güvenli bir şekilde JSON formatına çevirir."""
     try:
-        # Önce markdown formatını temizle
-        metin = metin.replace("```json", "").replace("```", "").strip()
-        
-        # Regex (Radar) ile sadece Köşeli Parantez [...] içini bul
-        match_array = re.search(r'\[.*\]', metin, re.DOTALL)
-        if match_array:
-            metin = match_array.group(0)
-        else:
-            # Liste yoksa süslü parantez {...} bul
-            match_obj = re.search(r'\{.*\}', metin, re.DOTALL)
-            if match_obj:
-                metin = match_obj.group(0)
-                
-        veri = json.loads(metin)
-        
-        # Eğer yapay zeka Dizi yerine Obje gönderdiyse
-        if isinstance(veri, dict):
-            # İçinde gizlenmiş liste varsa onu çıkar (Örn: {"yemekler": [...]})
-            for key, val in veri.items():
-                if isinstance(val, list):
-                    return val
-            # Yoksa objeyi listeye çevir
-            return [veri]
-            
-        return veri
-        
-    except Exception as e:
-        # Sistemi ÇÖKERTMEYEN güvenli hata ataması
-        return [{"ad": f"⚠️ AI Formatı Bozdu (Lütfen Silip Manuel Ekleyin)", "kalori": 0, "p": 0, "c": 0, "y": 0}]
+        return json.loads(metin)
+    except json.JSONDecodeError:
+        metin = re.sub(r'```json\s*|```\s*', '', metin)
+        bas = metin.find('[')
+        son = metin.rfind(']') + 1
+        if bas != -1 and son != 0:
+            metin = metin[bas:son]
+        metin = metin.replace('\n', ' ').replace('\r', '')
+        try:
+            return json.loads(metin)
+        except Exception:
+            return ast.literal_eval(metin)
 
 def gorsel_ilerleme(gercek_oran):
     """Küçük adımları büyük gösteren motivasyon barı (En az %5)"""
@@ -125,10 +109,11 @@ def gorsel_ilerleme(gercek_oran):
 API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
-# AI özgür bırakıldı (Multimodal fotoğraf analizinin çökmemesi için mime_type kaldırıldı)
+# AI SADECE JSON VERECEK ŞEKİLDE KİLİTLENDİ + KELİME SINIRI ARTIRILDI
 generation_config = genai.GenerationConfig(
     max_output_tokens=2000, 
-    temperature=0.2 
+    temperature=0.1, 
+    response_mime_type="application/json"
 )
 
 try:
@@ -549,7 +534,7 @@ else:
             m_c2.metric("Kalan", f"{toplam_verilecek:.1f} kg")
             st.progress(gorsel_ilerleme(ilerleme_orani), text=f"Hedefe Ulaşma: %{ilerleme_orani * 100:.7f}")
 
-        # --- SAYFA İÇERİĞİ YÖNLENDİRMELER ---
+        # --- SAYFA İÇERİĞİ YÖNLENDİRMELERİ ---
         if is_admin_viewing:
             st.warning(f"👁️ ŞU AN İZLEME MODUNDASINIZ: Kullanıcı **{kullanici_adi}** paneli görüntüleniyor. Değiştirme butonları gizlenmiştir.")
 
@@ -681,15 +666,33 @@ else:
                                 c_evet, c_hayir = st.columns(2)
                                 
                                 if c_evet.button("✅ Evet (Tabağa Ekle)", use_container_width=True, type="primary"):
-                                    yeni_ogun = {
-                                        "tip": st.session_state.kaydedilecek_ogun_tipi, 
-                                        "kalemler": st.session_state.json_veri, 
-                                        "toplam_kalori": sum(x.get('kalori',0) for x in st.session_state.json_veri),
-                                        "toplam_p": sum(x.get('p',0) for x in st.session_state.json_veri),
-                                        "toplam_c": sum(x.get('c',0) for x in st.session_state.json_veri),
-                                        "toplam_y": sum(x.get('y',0) for x in st.session_state.json_veri)
-                                    }
-                                    db["gecmis"][islem_tarihi]["ogünler"].append(yeni_ogun)
+                                    ogun_tipi = st.session_state.kaydedilecek_ogun_tipi
+                                    json_v = st.session_state.json_veri
+                                    
+                                    # AKILLI BİRLEŞTİRME (SMART MERGE): Öğün zaten varsa içine ekle
+                                    mevcut_idx = -1
+                                    for i, ogun in enumerate(db["gecmis"][islem_tarihi]["ogünler"]):
+                                        if ogun["tip"] == ogun_tipi:
+                                            mevcut_idx = i; break
+                                    
+                                    t_kcal = sum(x.get('kalori',0) for x in json_v)
+                                    t_p = sum(x.get('p',0) for x in json_v)
+                                    t_c = sum(x.get('c',0) for x in json_v)
+                                    t_y = sum(x.get('y',0) for x in json_v)
+
+                                    if mevcut_idx != -1:
+                                        db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["kalemler"].extend(json_v)
+                                        db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_kalori"] += t_kcal
+                                        db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_p"] += t_p
+                                        db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_c"] += t_c
+                                        db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_y"] += t_y
+                                    else:
+                                        yeni_ogun = {
+                                            "tip": ogun_tipi, "kalemler": json_v, 
+                                            "toplam_kalori": t_kcal, "toplam_p": t_p, "toplam_c": t_c, "toplam_y": t_y
+                                        }
+                                        db["gecmis"][islem_tarihi]["ogünler"].append(yeni_ogun)
+                                        
                                     gunluk_toplam_guncelle(islem_tarihi) 
                                     st.session_state.tabak_listesi = []; st.session_state.onay_bekleyen_metin = None; st.session_state.json_veri = []; st.rerun()
                                     
@@ -727,25 +730,24 @@ else:
                                         if st.button("🚀 Tabağı İncele ve Hesapla", type="primary", use_container_width=True):
                                             st.session_state.kaydedilecek_ogun_tipi = ogun_tipi
                                             with st.spinner("AI hesaplıyor..."):
-                                                # KESİN VE NET ŞABLON PROMPTU
                                                 prompt = f"""Kullanıcı yediği menü: {", ".join(st.session_state.tabak_listesi)}. 
-                                                Bu yiyeceklerin kalori, Protein(p), Karb(c) ve Yağ(y) değerlerini hesapla.
-                                                YANITINI SADECE VE SADECE AŞAĞIDAKİ GİBİ BİR JSON DİZİSİ OLARAK VER. BAŞKA HİÇBİR ŞEY YAZMA:
+                                                Tüm yiyeceklerin kalori, Protein(p), Karb(c), Yağ(y) değerlerini hesapla.
+                                                SADECE AŞAĞIDAKİ GİBİ BİR JSON DİZİSİ (ARRAY) OLARAK YANIT VER.
+                                                Örnek Format:
                                                 [
                                                   {{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}
                                                 ]"""
-                                                try:
-                                                    res = model.generate_content(prompt)
-                                                    v_list = json_kurtar(res.text)
-                                                    
-                                                    metin = ""
-                                                    for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
-                                                    metin += f"\n**TOPLAM: {sum(x.get('kalori',0) for x in v_list)} kcal**"
-                                                    
-                                                    st.session_state.json_veri = v_list
-                                                    st.session_state.onay_bekleyen_metin = metin
-                                                    st.rerun()
-                                                except Exception as e: st.error(f"Sistem Hatası: {e}")
+                                                
+                                                res = model.generate_content(prompt)
+                                                v_list = json_kurtar(res.text)
+                                                
+                                                metin = ""
+                                                for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
+                                                metin += f"\n**TOPLAM: {sum(x.get('kalori',0) for x in v_list)} kcal**"
+                                                
+                                                st.session_state.json_veri = v_list
+                                                st.session_state.onay_bekleyen_metin = metin
+                                                st.rerun()
 
                                 with t_foto:
                                     st.info("📸 Fotoğrafı yükle, gerisini AI halletsin!")
@@ -762,24 +764,27 @@ else:
                                                 img.thumbnail((512, 512), Image.Resampling.LANCZOS)
                                                 ek_b = f"Bu yemeğin '{ipucu}' olduğu belirtildi. " if ipucu else ""
                                                 
-                                                # KESİN VE NET FOTOĞRAF PROMPTU
-                                                prompt = f"""{ek_b}Fotoğraftaki yiyecekleri tespit et, porsiyon tahmini yap ve kalori, p, c, y değerlerini hesapla.
-                                                YANITINI SADECE VE SADECE AŞAĞIDAKİ GİBİ BİR JSON DİZİSİ OLARAK VER. BAŞKA HİÇBİR ŞEY YAZMA:
+                                                # KARTAL GÖZÜ PROMPTU
+                                                prompt = f"""{ek_b}Fotoğraftaki TÜM yiyecekleri TEK TEK tespit et. Tabakta/Masada ne kadar farklı çeşit varsa hepsini ayrı ayrı bul. (Örn: Sadece yumurtayı bulup bırakma, yanındaki peyniri, zeytini, ekmeği de bul).
+                                                Her birinin porsiyon tahminini yap ve kalori, p, c, y değerlerini hesapla.
+                                                YANITINI SADECE VE SADECE AŞAĞIDAKİ GİBİ BİR JSON DİZİSİ OLARAK VER. Başka hiçbir şey yazma.
+                                                Örnek Format:
                                                 [
-                                                  {{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}
+                                                  {{"ad": "1 Adet Haşlanmış Yumurta", "kalori": 78, "p": 6, "c": 1, "y": 5}},
+                                                  {{"ad": "2 Dilim Beyaz Peynir", "kalori": 120, "p": 8, "c": 2, "y": 10}},
+                                                  {{"ad": "5 Adet Siyah Zeytin", "kalori": 40, "p": 0, "c": 1, "y": 4}}
                                                 ]"""
-                                                try:
-                                                    res = model.generate_content([prompt, img])
-                                                    v_list = json_kurtar(res.text)
-                                                    
-                                                    metin = ""
-                                                    for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
-                                                    metin += f"\n**TOPLAM: {sum(x.get('kalori',0) for x in v_list)} kcal**"
-                                                    
-                                                    st.session_state.json_veri = v_list
-                                                    st.session_state.onay_bekleyen_metin = metin
-                                                    st.rerun()
-                                                except Exception as e: st.error(f"Görsel Analiz Hatası: {e}")
+                                                
+                                                res = model.generate_content([prompt, img])
+                                                v_list = json_kurtar(res.text)
+                                                
+                                                metin = ""
+                                                for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
+                                                metin += f"\n**TOPLAM: {sum(x.get('kalori',0) for x in v_list)} kcal**"
+                                                
+                                                st.session_state.json_veri = v_list
+                                                st.session_state.onay_bekleyen_metin = metin
+                                                st.rerun()
                                     
                                 with t_manuel:
                                     m_ogun = st.selectbox("Öğün", ["Kahvaltı", "Öğle Yemeği", "Akşam Yemeği", "Ara Öğün"])
@@ -791,11 +796,26 @@ else:
                                     m_y = c4.number_input("Yağ", 0, 500, 0)
                                     
                                     if st.button("Listeye Ekle", use_container_width=True) and m_ad:
-                                        yeni_ogun = {
-                                            "tip": m_ogun, "kalemler": [{"ad": m_ad, "kalori": m_k, "p":m_p, "c":m_c, "y":m_y}], 
-                                            "toplam_kalori": m_k, "toplam_p": m_p, "toplam_c": m_c, "toplam_y": m_y
-                                        }
-                                        db["gecmis"][islem_tarihi]["ogünler"].append(yeni_ogun)
+                                        # AKILLI BİRLEŞTİRME MANUEL İÇİN
+                                        mevcut_idx = -1
+                                        for i, ogun in enumerate(db["gecmis"][islem_tarihi]["ogünler"]):
+                                            if ogun["tip"] == m_ogun: mevcut_idx = i; break
+                                            
+                                        y_kalem = {"ad": m_ad, "kalori": m_k, "p":m_p, "c":m_c, "y":m_y}
+                                        
+                                        if mevcut_idx != -1:
+                                            db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["kalemler"].append(y_kalem)
+                                            db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_kalori"] += m_k
+                                            db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_p"] += m_p
+                                            db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_c"] += m_c
+                                            db["gecmis"][islem_tarihi]["ogünler"][mevcut_idx]["toplam_y"] += m_y
+                                        else:
+                                            yeni_ogun = {
+                                                "tip": m_ogun, "kalemler": [y_kalem], 
+                                                "toplam_kalori": m_k, "toplam_p": m_p, "toplam_c": m_c, "toplam_y": m_y
+                                            }
+                                            db["gecmis"][islem_tarihi]["ogünler"].append(yeni_ogun)
+                                            
                                         gunluk_toplam_guncelle(islem_tarihi); st.rerun()
 
                     with st.container(border=True):
