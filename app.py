@@ -62,7 +62,7 @@ except ValueError:
 db_firestore = firestore.client()
 
 # ==========================================
-# YARDIMCI FONKSİYONLAR (ÖLÜMSÜZ JSON)
+# YARDIMCI FONKSİYONLAR (RADAR JSON SİSTEMİ)
 # ==========================================
 if 'aktif_kullanici' not in st.session_state: st.session_state.aktif_kullanici = None
 if 'incelenen_kullanici' not in st.session_state: st.session_state.incelenen_kullanici = None
@@ -82,32 +82,37 @@ if st.session_state.panel_kapat:
     st.session_state.panel_kapat = False
 
 def json_kurtar(metin):
-    """
-    AI ne kadar saçmalarsa saçmalasın, uygulamayı ÇÖKERTMEYEN ölümsüz JSON okuyucu.
-    Dizi veya Obje yakalar. Yakalayamazsa sahte veri dönerek sistemi korur.
-    """
+    """AI ne yaparsa yapsın, metnin içinden sadece JSON verisini cımbızlayan Avcı/Radar sistemi."""
     try:
-        # Markdown kalıntılarını sil
+        # Önce markdown formatını temizle
         metin = metin.replace("```json", "").replace("```", "").strip()
         
-        # Regex ile sadece köşeli [...] veya süslü {...} parantez içini zorla yakala
-        match = re.search(r'(\[.*\]|\{.*\})', metin, re.DOTALL)
-        if match:
-            metin = match.group(1)
-            
+        # Regex (Radar) ile sadece Köşeli Parantez [...] içini bul
+        match_array = re.search(r'\[.*\]', metin, re.DOTALL)
+        if match_array:
+            metin = match_array.group(0)
+        else:
+            # Liste yoksa süslü parantez {...} bul
+            match_obj = re.search(r'\{.*\}', metin, re.DOTALL)
+            if match_obj:
+                metin = match_obj.group(0)
+                
         veri = json.loads(metin)
         
-        # Eğer AI inat edip Dizi [] yerine Obje {} döndürdüyse, bunu zorla Diziye çevir
+        # Eğer yapay zeka Dizi yerine Obje gönderdiyse
         if isinstance(veri, dict):
+            # İçinde gizlenmiş liste varsa onu çıkar (Örn: {"yemekler": [...]})
             for key, val in veri.items():
-                if isinstance(val, list): return val # İç içe gizlenmiş liste varsa onu al
-            return [veri] # Yoksa objenin kendisini listeye sar
+                if isinstance(val, list):
+                    return val
+            # Yoksa objeyi listeye çevir
+            return [veri]
             
         return veri
-
+        
     except Exception as e:
-        # NÜKLEER SEÇENEK: Sistem çökmez. Bozuk veri atar, sen manuel silersin.
-        return [{"ad": "⚠️ AI Formatı Bozdu (Lütfen Silip Manuel Ekleyin)", "kalori": 0, "p": 0, "c": 0, "y": 0}]
+        # Sistemi ÇÖKERTMEYEN güvenli hata ataması
+        return [{"ad": f"⚠️ AI Formatı Bozdu (Lütfen Silip Manuel Ekleyin)", "kalori": 0, "p": 0, "c": 0, "y": 0}]
 
 def gorsel_ilerleme(gercek_oran):
     """Küçük adımları büyük gösteren motivasyon barı (En az %5)"""
@@ -120,11 +125,10 @@ def gorsel_ilerleme(gercek_oran):
 API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
-# AI SADECE JSON VERECEK ŞEKİLDE KİLİTLENDİ + KELİME SINIRI ARTIRILDI
+# AI özgür bırakıldı (Multimodal fotoğraf analizinin çökmemesi için mime_type kaldırıldı)
 generation_config = genai.GenerationConfig(
-    max_output_tokens=2000,  # Yarım kalmasını engellemek için iki katına çıktı
-    temperature=0.1, 
-    response_mime_type="application/json"
+    max_output_tokens=2000, 
+    temperature=0.2 
 )
 
 try:
@@ -545,7 +549,7 @@ else:
             m_c2.metric("Kalan", f"{toplam_verilecek:.1f} kg")
             st.progress(gorsel_ilerleme(ilerleme_orani), text=f"Hedefe Ulaşma: %{ilerleme_orani * 100:.7f}")
 
-        # --- SAYFA İÇERİĞİ YÖNLENDİRMELERİ ---
+        # --- SAYFA İÇERİĞİ YÖNLENDİRMELER ---
         if is_admin_viewing:
             st.warning(f"👁️ ŞU AN İZLEME MODUNDASINIZ: Kullanıcı **{kullanici_adi}** paneli görüntüleniyor. Değiştirme butonları gizlenmiştir.")
 
@@ -723,20 +727,25 @@ else:
                                         if st.button("🚀 Tabağı İncele ve Hesapla", type="primary", use_container_width=True):
                                             st.session_state.kaydedilecek_ogun_tipi = ogun_tipi
                                             with st.spinner("AI hesaplıyor..."):
+                                                # KESİN VE NET ŞABLON PROMPTU
                                                 prompt = f"""Kullanıcı yediği menü: {", ".join(st.session_state.tabak_listesi)}. 
-                                                Tüm yiyeceklerin kalori, Protein(p), Karb(c), Yağ(y) değerlerini hesapla.
-                                                Asla ek açıklama yapma."""
-                                                
-                                                res = model.generate_content(prompt)
-                                                v_list = json_kurtar(res.text)
-                                                
-                                                metin = ""
-                                                for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
-                                                metin += f"\n**TOPLAM: {sum(x.get('kalori',0) for x in v_list)} kcal**"
-                                                
-                                                st.session_state.json_veri = v_list
-                                                st.session_state.onay_bekleyen_metin = metin
-                                                st.rerun()
+                                                Bu yiyeceklerin kalori, Protein(p), Karb(c) ve Yağ(y) değerlerini hesapla.
+                                                YANITINI SADECE VE SADECE AŞAĞIDAKİ GİBİ BİR JSON DİZİSİ OLARAK VER. BAŞKA HİÇBİR ŞEY YAZMA:
+                                                [
+                                                  {{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}
+                                                ]"""
+                                                try:
+                                                    res = model.generate_content(prompt)
+                                                    v_list = json_kurtar(res.text)
+                                                    
+                                                    metin = ""
+                                                    for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
+                                                    metin += f"\n**TOPLAM: {sum(x.get('kalori',0) for x in v_list)} kcal**"
+                                                    
+                                                    st.session_state.json_veri = v_list
+                                                    st.session_state.onay_bekleyen_metin = metin
+                                                    st.rerun()
+                                                except Exception as e: st.error(f"Sistem Hatası: {e}")
 
                                 with t_foto:
                                     st.info("📸 Fotoğrafı yükle, gerisini AI halletsin!")
@@ -753,18 +762,24 @@ else:
                                                 img.thumbnail((512, 512), Image.Resampling.LANCZOS)
                                                 ek_b = f"Bu yemeğin '{ipucu}' olduğu belirtildi. " if ipucu else ""
                                                 
-                                                prompt = f"""{ek_b}Fotoğraftaki yiyecekleri tespit et, porsiyon tahmini yap ve kalori, p, c, y değerlerini hesapla. Asla ek açıklama yapma."""
-                                                
-                                                res = model.generate_content([prompt, img])
-                                                v_list = json_kurtar(res.text)
-                                                
-                                                metin = ""
-                                                for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
-                                                metin += f"\n**TOPLAM: {sum(x.get('kalori',0) for x in v_list)} kcal**"
-                                                
-                                                st.session_state.json_veri = v_list
-                                                st.session_state.onay_bekleyen_metin = metin
-                                                st.rerun()
+                                                # KESİN VE NET FOTOĞRAF PROMPTU
+                                                prompt = f"""{ek_b}Fotoğraftaki yiyecekleri tespit et, porsiyon tahmini yap ve kalori, p, c, y değerlerini hesapla.
+                                                YANITINI SADECE VE SADECE AŞAĞIDAKİ GİBİ BİR JSON DİZİSİ OLARAK VER. BAŞKA HİÇBİR ŞEY YAZMA:
+                                                [
+                                                  {{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}
+                                                ]"""
+                                                try:
+                                                    res = model.generate_content([prompt, img])
+                                                    v_list = json_kurtar(res.text)
+                                                    
+                                                    metin = ""
+                                                    for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
+                                                    metin += f"\n**TOPLAM: {sum(x.get('kalori',0) for x in v_list)} kcal**"
+                                                    
+                                                    st.session_state.json_veri = v_list
+                                                    st.session_state.onay_bekleyen_metin = metin
+                                                    st.rerun()
+                                                except Exception as e: st.error(f"Görsel Analiz Hatası: {e}")
                                     
                                 with t_manuel:
                                     m_ogun = st.selectbox("Öğün", ["Kahvaltı", "Öğle Yemeği", "Akşam Yemeği", "Ara Öğün"])
