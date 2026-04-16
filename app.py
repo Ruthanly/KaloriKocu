@@ -494,27 +494,36 @@ else:
         if aktif_sayfa == "📅 Günlük Takip":
             
             if 'secili_tarih' not in st.session_state:
-                st.session_state.secili_tarih = datetime.date.today()
+            st.session_state.secili_tarih = datetime.date.today()
 
-            with st.container(border=True):
-                col_btn_geri, col_tarih, col_btn_ileri = st.columns([1, 2, 1])
-                
-                with col_btn_geri:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.button("◀ Önceki Gün", use_container_width=True):
-                        st.session_state.secili_tarih -= datetime.timedelta(days=1)
-                        st.rerun()
-                        
-                with col_tarih:
-                    st.session_state.secili_tarih = st.date_input("📅 Çalıştığınız Tarihi Seçin:", value=st.session_state.secili_tarih, max_value=datetime.date.today())
-                    islem_tarihi = str(st.session_state.secili_tarih)
+        with st.container(border=True):
+            # Sütun sayısını 4'e çıkardık ve genişlikleri butonların sığacağı şekilde ayarladık
+            col_btn_geri, col_tarih, col_btn_bugun, col_btn_ileri = st.columns([1.2, 2, 1.2, 1.2])
+            
+            with col_btn_geri:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("◀ Önceki Gün", use_container_width=True):
+                    st.session_state.secili_tarih -= datetime.timedelta(days=1)
+                    st.rerun()
                     
-                with col_btn_ileri:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.session_state.secili_tarih < datetime.date.today():
-                        if st.button("Sonraki Gün ▶", use_container_width=True):
-                            st.session_state.secili_tarih += datetime.timedelta(days=1)
-                            st.rerun()
+            with col_tarih:
+                st.session_state.secili_tarih = st.date_input("📅 Çalıştığınız Tarihi Seçin:", value=st.session_state.secili_tarih, max_value=datetime.date.today())
+                islem_tarihi = str(st.session_state.secili_tarih)
+                
+            with col_btn_bugun:
+                st.markdown("<br>", unsafe_allow_html=True)
+                # Sadece geçmiş bir tarihteysek "Bugüne Git" butonu çıksın/aktif olsun
+                if st.session_state.secili_tarih < datetime.date.today():
+                    if st.button("🎯 Bugüne Git", type="primary", use_container_width=True):
+                        st.session_state.secili_tarih = datetime.date.today()
+                        st.rerun()
+
+            with col_btn_ileri:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.session_state.secili_tarih < datetime.date.today():
+                    if st.button("Sonraki Gün ▶", use_container_width=True):
+                        st.session_state.secili_tarih += datetime.timedelta(days=1)
+                        st.rerun()
 
                 if islem_tarihi not in db["gecmis"]: 
                     db["gecmis"][islem_tarihi] = {"toplam": 0, "toplam_p": 0, "toplam_c": 0, "toplam_y": 0, "ogünler": [], "su_litre": 0.0, "egzersizler": [], "yakilan_kalori": 0}
