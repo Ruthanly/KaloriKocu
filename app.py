@@ -20,47 +20,29 @@ except ImportError:
 # ==========================================
 # 0. SAYFA AYARI VE GÜVENLİ CSS KÖPRÜSÜ
 # ==========================================
-st.set_page_config(page_title="Kalori ve Koçluk", page_icon="🍏", layout="wide")
+st.set_page_config(page_title="Kalori ve Koçluk Merkezi", page_icon="🍏", layout="wide")
 
-# Sadece güvenli ve görünümü iyileştiren CSS
 st.markdown("""
 <style>
-/* --- ÜST MENÜYÜ TAB (SEKME) GİBİ YAPMA --- */
+/* Üst Menü Tab Görünümü */
 div[role="radiogroup"] {
-    display: flex;
-    flex-direction: row;
-    justify-content: center;
-    background-color: #262730;
-    border-radius: 10px;
-    padding: 5px;
-    gap: 5px;
+    display: flex; flex-direction: row; justify-content: center;
+    background-color: #262730; border-radius: 10px; padding: 5px; gap: 5px;
 }
 div[role="radiogroup"] > label {
-    flex: 1;
-    justify-content: center;
-    padding: 10px 5px;
-    border-radius: 8px;
-    margin: 0;
-    background: transparent;
-    text-align: center;
-    border: 1px solid transparent;
+    flex: 1; justify-content: center; padding: 10px 5px; border-radius: 8px;
+    margin: 0; background: transparent; text-align: center; border: 1px solid transparent;
 }
-div[role="radiogroup"] > label[data-checked="true"] {
-    background-color: #2ecc71 !important;
-}
-div[role="radiogroup"] > label[data-checked="true"] p {
-    color: #1e1e1e !important;
-    font-weight: bold;
+div[role="radiogroup"] > label[data-checked="true"] { background-color: #2ecc71 !important; }
+div[role="radiogroup"] > label[data-checked="true"] p { color: #1e1e1e !important; font-weight: bold; }
+
+/* Mobil Padding Düzenleme */
+@media (max-width: 768px) {
+    .block-container { padding-top: 2rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
 }
 
-/* Mobilde ekran paddinglerini daraltarak alan kazanma */
-@media (max-width: 768px) {
-    .block-container {
-        padding-top: 2rem !important;
-        padding-left: 0.5rem !important;
-        padding-right: 0.5rem !important;
-    }
-}
+/* Profil Fotoğrafı Hover Etkisi Engelleme */
+img.custom-pp { cursor: default !important; pointer-events: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -75,68 +57,61 @@ except ValueError:
         cred = credentials.Certificate(firebase_secrets)
         firebase_admin.initialize_app(cred)
     except Exception as e:
-        st.error(f"Veritabanı bağlantı hatası: Sisteme bağlanılamadı. Lütfen yöneticinizle iletişime geçin. (Hata: {e})")
+        st.error(f"Veritabanı bağlantı hatası: Sisteme bağlanılamadı. Hata: {e}")
 
 db_firestore = firestore.client()
 
 # ==========================================
-# KULLANICI GİRİŞ SİSTEMİ VE JS TETİKLEYİCİSİ
+# YARDIMCI FONKSİYONLAR (JSON & JS & DİĞER)
 # ==========================================
-if 'aktif_kullanici' not in st.session_state:
-    st.session_state.aktif_kullanici = None
+if 'aktif_kullanici' not in st.session_state: st.session_state.aktif_kullanici = None
+if 'incelenen_kullanici' not in st.session_state: st.session_state.incelenen_kullanici = None
+if 'aktif_sayfa' not in st.session_state: st.session_state.aktif_sayfa = "📅 Günlük Takip"
+if 'panel_kapat' not in st.session_state: st.session_state.panel_kapat = False
 
-if 'incelenen_kullanici' not in st.session_state:
-    st.session_state.incelenen_kullanici = None
-
-if 'aktif_sayfa' not in st.session_state:
-    st.session_state.aktif_sayfa = "📅 Günlük Takip"
-
-if 'panel_kapat' not in st.session_state:
-    st.session_state.panel_kapat = False
-
-# Mobil cihazlarda butona tıklanınca paneli otomatik kapatan JS ajanı
+# Mobil Panel Kapatıcı JS
 if st.session_state.panel_kapat:
-    components.html("""
-        <script>
-            // Sadece mobil görünümdeyse çalıştır
-            if (window.innerWidth <= 768) {
-                var buttons = window.parent.document.querySelectorAll('button');
-                for (var i = 0; i < buttons.length; i++) {
-                    if (buttons[i].getAttribute('kind') === 'headerNoPadding') {
-                        buttons[i].click();
-                        break;
-                    }
-                }
+    components.html("""<script>
+        if (window.innerWidth <= 768) {
+            var buttons = window.parent.document.querySelectorAll('button');
+            for (var i = 0; i < buttons.length; i++) {
+                if (buttons[i].getAttribute('kind') === 'headerNoPadding') { buttons[i].click(); break; }
             }
-        </script>
-    """, height=0, width=0)
+        }
+    </script>""", height=0, width=0)
     st.session_state.panel_kapat = False
 
+def json_temizle(metin):
+    """AI'dan gelen kirli JSON metnini temizler ve satır sonu hatalarını (unterminated string) çözer."""
+    metin = re.sub(r'```json\s*|```\s*', '', metin)
+    bas = metin.find('[')
+    son = metin.rfind(']') + 1
+    if bas != -1 and son != 0:
+        metin = metin[bas:son]
+    
+    # En kritik düzeltme: JSON içindeki tüm alt satıra geçişleri (Enter) ve tabları boşluğa çevirir.
+    # Bu sayede 'Unterminated string' hatası kökten çözülür.
+    metin = metin.replace('\n', ' ').replace('\r', '').replace('\t', ' ')
+    return metin
+
+def gorsel_ilerleme(gercek_oran):
+    """Küçük adımları büyük gösteren motivasyon barı (En az %5)"""
+    if gercek_oran <= 0: return 0.0
+    return max(0.05, min(gercek_oran, 1.0))
+
 # ==========================================
-# 1. AYARLAR VE YAPAY ZEKA
+# 1. YAPAY ZEKA VE VERİ LİSTELERİ
 # ==========================================
 API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
-
-generation_config = genai.GenerationConfig(
-    max_output_tokens=250, 
-    temperature=0.4
-)
+generation_config = genai.GenerationConfig(max_output_tokens=1000, temperature=0.2)
 
 try:
     calisan_modeller = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
     flash_modelleri = [m for m in calisan_modeller if 'flash' in m.lower()]
-    
-    if flash_modelleri:
-        secilen_model = flash_modelleri[0] 
-    elif calisan_modeller:
-        secilen_model = calisan_modeller[0]
-    else:
-        secilen_model = 'gemini-1.5-flash-latest' 
-        
+    secilen_model = flash_modelleri[0] if flash_modelleri else 'gemini-1.5-flash-latest'
     model = genai.GenerativeModel(secilen_model, generation_config=generation_config)
-except Exception as e:
-    st.error(f"Model ayarlanırken bir hata oluştu: {e}")
+except Exception:
     model = None
 
 YAYGIN_YEMEKLER = [
@@ -150,13 +125,9 @@ YAYGIN_YEMEKLER = [
     "Kola", "Meyve Suyu", "Maden Suyu", "Baklava", "Sütlaç", "Kazandibi", "Profiterol", "Dondurma", "Çikolata", "Ceviz", "Fındık", "Badem"
 ]
 
-# Görsel İllüzyon Fonksiyonu (Progres Bar için)
-def gorsel_ilerleme(gercek_oran):
-    if gercek_oran <= 0:
-        return 0.0
-    return max(0.05, min(gercek_oran, 1.0)) # En az %5 gösterir
-
-# --- LOGIN / REGISTER EKRANI ---
+# ==========================================
+# 2. LOGIN / REGISTER EKRANI
+# ==========================================
 if st.session_state.aktif_kullanici is None:
     st.markdown("<h1 style='text-align: center; color: #2ecc71; margin-top: 50px;'>🍏 Kalori ve Koçluk Merkezi</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: gray;'>Devam etmek için lütfen giriş yapın veya kayıt olun.</p>", unsafe_allow_html=True)
@@ -219,19 +190,21 @@ if st.session_state.aktif_kullanici is None:
                         bugun = str(datetime.date.today())
                         kullanici_ref.set({"sifre": kayit_sifre, "kayit_tarihi": bugun})
                         db_firestore.collection("kullanici_verileri").document(kayit_kadi).set({
-                            "profil": {"isim": kayit_kadi, "kayit_tarihi": bugun}, 
-                            "gecmis": {}
+                            "profil": {"isim": kayit_kadi, "kayit_tarihi": bugun}, "gecmis": {}
                         })
                         st.success("Kayıt başarılı! Şimdi giriş yapabilirsiniz.")
 
-# --- ROUTING MANTIĞI: ADMIN Mİ, NORMAL KULLANICI MI, YOKSA ADMIN İNCELEMEDE Mİ? ---
+# ==========================================
+# 3. ANA UYGULAMA (YÖNLENDİRME)
+# ==========================================
 else:
     kullanici_adi = st.session_state.aktif_kullanici
+    is_admin_viewing = False
 
+    # ---------------------------------------------------------
+    # 3.1. ADMIN PANELİ GÖRÜNÜMÜ
+    # ---------------------------------------------------------
     if kullanici_adi == "admin" and not st.session_state.get("incelenen_kullanici"):
-        # ==========================================
-        # YÖNETİCİ (ADMIN) PANELİ ANA EKRANI
-        # ==========================================
         with st.sidebar:
             st.markdown("<h3 style='text-align:center; margin-top:-20px;'>👑 Admin Paneli</h3>", unsafe_allow_html=True)
             st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
@@ -286,7 +259,7 @@ else:
                 
                 if foto_b64:
                     pp_col, info_col = st.columns([1, 8])
-                    pp_col.markdown(f'<img src="data:image/png;base64,{foto_b64}" style="width:100%; border-radius:10px; cursor:default;">', unsafe_allow_html=True)
+                    pp_col.markdown(f'<img src="data:image/png;base64,{foto_b64}" class="custom-pp" style="width:100%; border-radius:10px;">', unsafe_allow_html=True)
                 
                 tab_detay, tab_ayar = st.tabs(["📊 Gelişmiş İstatistikler", "⚙️ Hesap Ayarları & İşlemler"])
                 
@@ -345,18 +318,17 @@ else:
                     st.divider()
                     if st.button("🔍 Kullanıcının Panelini İncele", key=f"view_{kadi}", type="primary", use_container_width=True):
                         st.session_state.incelenen_kullanici = kadi
-                        st.session_state.panel_kapat = True # MOBİL KAPANMA TETİKLEYİCİSİ
+                        st.session_state.panel_kapat = True
                         st.rerun()
 
         if bulunan_sayisi == 0:
             st.info("Arama kriterlerinize uyan bir kullanıcı bulunamadı.")
 
+    # ---------------------------------------------------------
+    # 3.2. KULLANICI (VEYA İNCELEME YAPAN ADMIN) GÖRÜNÜMÜ
+    # ---------------------------------------------------------
     else:
-        # ==========================================
-        # ANA UYGULAMA (Kullanıcılar veya İnceleyen Admin İçin)
-        # ==========================================
-        is_admin_viewing = False
-        if kullanici_adi == "admin" and st.session_state.get("incelenen_kullanici"):
+        if kullanici_adi == "admin":
             kullanici_adi = st.session_state.incelenen_kullanici
             is_admin_viewing = True
 
@@ -398,9 +370,7 @@ else:
                 db["gecmis"][tarih]["toplam_y"] = top_y
                 verileri_kaydet_bulut(db)
 
-        # ==========================================
-        # 2. TEMEL DEĞİŞKENLER VE HESAPLAMALAR
-        # ==========================================
+        # Temel Değişkenler ve Hesaplamalar
         p = db["profil"]
 
         isim = p.get("isim", kullanici_adi)
@@ -436,29 +406,26 @@ else:
         hedef_yag = int((orijinal_gunluk_limit * 0.25) / 9) 
         hedef_karb = int((orijinal_gunluk_limit - (hedef_protein * 4) - (hedef_yag * 9)) / 4)
 
-        # ==========================================
-        # 3. YAN MENÜ: PROFİL VE NAVİGASYON
-        # ==========================================
+        # --- YAN MENÜ (SIDEBAR) ---
         with st.sidebar:
             if is_admin_viewing:
                 if st.button("⬅️ Admin Paneline Dön", type="primary", use_container_width=True):
                     st.session_state.incelenen_kullanici = None
-                    st.session_state.panel_kapat = True # MOBİL KAPANMA TETİKLEYİCİSİ
+                    st.session_state.panel_kapat = True
                     st.rerun()
                 st.write("---")
 
             foto_b64_user = p.get("foto_base64", "")
             if foto_b64_user:
-                c_img1, c_img2, c_img3 = st.columns([1, 2, 1])
-                c_img2.markdown(f'<img src="data:image/png;base64,{foto_b64_user}" style="width:100%; border-radius:50%; cursor:default; margin-bottom:10px;">', unsafe_allow_html=True)
+                st.markdown(f'<div style="text-align:center;"><img src="data:image/png;base64,{foto_b64_user}" class="custom-pp" style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:3px solid #2ecc71;"></div>', unsafe_allow_html=True)
 
-            st.markdown(f"<h3 style='margin-top:-20px; margin-bottom:0px; text-align:center;'>👤 {isim}</h3>", unsafe_allow_html=True)
+            st.markdown(f"<h3 style='margin-top:10px; margin-bottom:10px; text-align:center;'>👤 {isim}</h3>", unsafe_allow_html=True)
             
             if not is_admin_viewing:
                 col_y_1, col_y_2 = st.columns(2)
                 if col_y_1.button("⚙️ Hesap Ayarı", use_container_width=True):
                     st.session_state.aktif_sayfa = "Hesap Yönetimi"
-                    st.session_state.panel_kapat = True # MOBİL KAPANMA TETİKLEYİCİSİ
+                    st.session_state.panel_kapat = True
                     st.rerun()
                 if col_y_2.button("🚪 Çıkış", use_container_width=True, type="primary"):
                     st.session_state.aktif_kullanici = None
@@ -525,13 +492,13 @@ else:
                     verileri_kaydet_bulut(db)
                     st.success("Kişisel bilgiler kaydedildi!")
 
+            # 10 Günlük Kilo Paneli Mantığı
             son_kilo_tarihi_str = p.get("son_kilo_guncelleme", "")
             
             if not son_kilo_tarihi_str:
                 hesap_doc = db_firestore.collection("hesaplar").document(kullanici_adi).get()
                 if hesap_doc.exists:
                     son_kilo_tarihi_str = hesap_doc.to_dict().get("kayit_tarihi", "")
-                
                 if not son_kilo_tarihi_str:
                     son_kilo_tarihi_str = str(datetime.date.today())
 
@@ -610,14 +577,11 @@ else:
             
             st.progress(gorsel_ilerleme(ilerleme_orani), text=f"Hedefe Ulaşma: %{ilerleme_orani * 100:.7f}")
 
-        # ==========================================
-        # 4. ANA İÇERİK ALANI VE YÖNLENDİRME
-        # ==========================================
+        # --- ANA İÇERİK EKRANI ---
         if is_admin_viewing:
             st.warning(f"👁️ ŞU AN İZLEME MODUNDASINIZ: Kullanıcı **{kullanici_adi}** paneli görüntüleniyor. Veri değiştirme butonları gizlenmiştir.")
 
         if st.session_state.aktif_sayfa == "Hesap Yönetimi":
-            
             if st.session_state.get("hesap_guncellendi_mesaji"):
                 st.success(st.session_state.hesap_guncellendi_mesaji)
                 st.warning("Değişikliklerin aktif olması ve güvenliğiniz için çıkış yapıldı. Lütfen yeni bilgilerinizle tekrar giriş yapın.")
@@ -800,12 +764,12 @@ else:
                             elif fark <= 0:
                                 st.success(f"🎉 **Harika İş Çıkardın {isim}:** Dün hedefine tam sadık kaldın ve **{abs(fark)} kcal** ekstra açık yarattın. Aynen böyle devam et!")
 
-                # ==========================================
-                # YENİ UX MİMARİSİ: ALT SEKMELER (TABS)
-                # ==========================================
+                # --- UX MİMARİSİ: ALT SEKMELER (TABS) ---
                 tab_ekle, tab_ozet, tab_egzersiz = st.tabs(["🍽️ Yiyecek Ekle & Menü", "📊 Günlük Özet & Su", "🏃 Egzersiz"])
 
-                # --- SEKME 1: YİYECEK EKLE VE MENÜ ---
+                # ===============================================
+                # TAB 1: YİYECEK EKLE & MENÜ
+                # ===============================================
                 with tab_ekle:
                     if not is_admin_viewing:
                         with st.container(border=True):
@@ -897,28 +861,24 @@ else:
                                             st.session_state.kaydedilecek_ogun_tipi = ogun_tipi_liste
                                             with st.spinner("AI tabağı inceliyor ve makroları hesaplıyor..."):
                                                 liste_metni = ", ".join(st.session_state.tabak_listesi)
+                                                # KESİN JSON PROMPTU
                                                 prompt = f"""
                                                 Kullanıcı şunları yedi: {liste_metni}.
                                                 Görevlerin:
                                                 1. Yazım hatalarını düzelt. 
-                                                2. KESİNLİKLE kısaltma, özetleme yapma. Verilen listeyi ve içerikleri tam olarak koruyarak sadece gramer düzeltmesi yap.
-                                                3. Her bir yiyeceğin kalorisini, Protein(p), Karbonhidrat(c) ve Yağ(y) gram değerlerini hesapla.
+                                                2. Her bir yiyeceğin kalorisini, Protein(p), Karbonhidrat(c) ve Yağ(y) gram değerlerini hesapla.
+                                                3. SADECE VE SADECE JSON FORMATINDA YANIT VER. Asla açıklama veya ek metin kullanma.
+                                                4. JSON nesnesi içindeki "ad" alanında KESİNLİKLE çift tırnak (") veya alt satıra geçiş (Enter) kullanma.
                                                 
-                                                SADECE VE SADECE AŞAĞIDAKİ GİBİ JSON FORMATINDA YANIT VER. BAŞKA HİÇBİR METİN YAZMA:
+                                                Örnek Format:
                                                 [
-                                                  {{"ad": "[Miktar] [Birim] [Yemek Adı]", "kalori": 100, "p": 10, "c": 20, "y": 5}}
+                                                  {{"ad": "1 Porsiyon Fırın Makarna", "kalori": 450, "p": 15, "c": 60, "y": 12}}
                                                 ]
                                                 """
                                                 try:
                                                     res = model.generate_content(prompt)
-                                                    cevap = res.text.strip()
-                                                    
-                                                    if "```json" in cevap:
-                                                        cevap = cevap.split("```json")[1].split("```")[0].strip()
-                                                    elif "```" in cevap:
-                                                        cevap = cevap.split("```")[1].strip()
-                                                        
-                                                    veri_listesi = json.loads(cevap)
+                                                    temiz_json = json_temizle(res.text)
+                                                    veri_listesi = json.loads(temiz_json)
                                                     
                                                     t_kal = sum(int(item.get("kalori", 0)) for item in veri_listesi)
                                                     t_p = sum(int(item.get("p", 0)) for item in veri_listesi)
@@ -928,7 +888,6 @@ else:
                                                     gosterilecek_metin = ""
                                                     for item in veri_listesi:
                                                         gosterilecek_metin += f"- {item['ad']}: **{item.get('kalori', 0)} kcal** | {item.get('p', 0)}P | {item.get('c', 0)}K | {item.get('y', 0)}Y\n"
-                                                    
                                                     gosterilecek_metin += f"\n**TOPLAM: {t_kal} kcal** | {t_p}P | {t_c}K | {t_y}Y"
                                                     
                                                     st.session_state.json_veri = veri_listesi
@@ -957,31 +916,26 @@ else:
                                                 img_ai = img.copy()
                                                 img_ai.thumbnail((512, 512), Image.Resampling.LANCZOS)
                                                 
-                                                ek_bilgi = f"Kullanıcı bu yemeğin '{ipucu}' olduğunu belirtti. Bu ipucundaki olası yazım ve dilbilgisi hatalarını arka planda otomatik olarak düzelt (düzeltirken KESİNLİKLE kısaltma veya özetleme yapma, içeriği tam koru). Sonra bu bilgiyi fotoğrafla eşleştirerek porsiyon ve gramaj tahmini yap." if ipucu else "Yemeği kendin tanı ve porsiyon tahmini yap."
+                                                ek_bilgi = f"Kullanıcı bu yemeğin '{ipucu}' olduğunu belirtti. İpucuna göre porsiyon tahmini yap." if ipucu else "Yemeği kendin tanı ve porsiyon tahmini yap."
+                                                # KESİN JSON PROMPTU
                                                 prompt = f"""
                                                 Kullanıcı {st.session_state.kaydedilecek_ogun_tipi} olarak ekteki fotoğrafı yükledi.
                                                 {ek_bilgi}
                                                 Görevlerin:
                                                 1. Fotoğraftaki yiyecekleri tespit et.
                                                 2. Porsiyon/gramaj büyüklüğünü fotoğrafa göre tahmin et.
-                                                3. KESİNLİKLE kısaltma, özetleme yapma. Tüm içeriği ve detayları koruyarak yaz.
-                                                4. Her bir yiyeceğin kalorisini, Protein(p), Karbonhidrat(c) ve Yağ(y) gram değerlerini hesapla.
+                                                3. SADECE VE SADECE JSON FORMATINDA YANIT VER. Asla açıklama veya ek metin kullanma.
+                                                4. JSON içindeki metinlerde KESİNLİKLE ÇİFT TIRNAK (") veya ALT SATIRA GEÇİŞ (Enter) kullanma.
                                                 
-                                                SADECE VE SADECE AŞAĞIDAKİ GİBİ JSON FORMATINDA YANIT VER. BAŞKA HİÇBİR METİN YAZMA:
+                                                Örnek Format:
                                                 [
-                                                  {{"ad": "[Tahmini Miktar] [Birim] [Yemek Adı]", "kalori": 100, "p": 10, "c": 20, "y": 5}}
+                                                  {{"ad": "1 Porsiyon Fırın Makarna", "kalori": 450, "p": 15, "c": 60, "y": 12}}
                                                 ]
                                                 """
                                                 try:
                                                     res = model.generate_content([prompt, img_ai])
-                                                    cevap = res.text.strip()
-                                                    
-                                                    if "```json" in cevap:
-                                                        cevap = cevap.split("```json")[1].split("```")[0].strip()
-                                                    elif "```" in cevap:
-                                                        cevap = cevap.split("```")[1].strip()
-                                                        
-                                                    veri_listesi = json.loads(cevap)
+                                                    temiz_json = json_temizle(res.text)
+                                                    veri_listesi = json.loads(temiz_json)
                                                     
                                                     t_kal = sum(int(item.get("kalori", 0)) for item in veri_listesi)
                                                     t_p = sum(int(item.get("p", 0)) for item in veri_listesi)
@@ -991,7 +945,6 @@ else:
                                                     gosterilecek_metin = ""
                                                     for item in veri_listesi:
                                                         gosterilecek_metin += f"- {item['ad']}: **{item.get('kalori', 0)} kcal** | {item.get('p', 0)}P | {item.get('c', 0)}K | {item.get('y', 0)}Y\n"
-                                                    
                                                     gosterilecek_metin += f"\n**TOPLAM: {t_kal} kcal** | {t_p}P | {t_c}K | {t_y}Y"
                                                     
                                                     st.session_state.json_veri = veri_listesi
@@ -1002,7 +955,7 @@ else:
                                                     st.session_state.onay_y = t_y
                                                     st.rerun()
                                                 except Exception as e:
-                                                    st.error(f"Fotoğraf analiz hatası: {e}")
+                                                    st.error(f"Fotoğraf analiz hatası. Lütfen tekrar deneyin: {e}")
                                     
                                 with t_manuel:
                                     m_ogun = st.selectbox("Öğün", ["Kahvaltı", "Öğle Yemeği", "Akşam Yemeği", "Ara Öğün"], key="m_ogun")
@@ -1022,7 +975,6 @@ else:
                                         gunluk_toplam_guncelle(islem_tarihi)
                                         st.rerun()
 
-                    # Yiyecek Ekle sekmesi içindeki Menü Listesi
                     with st.container(border=True):
                         st.markdown(f"### 📋 Bugünkü Menü")
                         gunluk_veri = db["gecmis"][islem_tarihi]
@@ -1059,7 +1011,9 @@ else:
                                             gunluk_toplam_guncelle(islem_tarihi)
                                             st.rerun()
 
-                # --- SEKME 2: ÖZET VE SU ---
+                # ===============================================
+                # TAB 2: ÖZET & SU
+                # ===============================================
                 with tab_ozet:
                     with st.container(border=True):
                         col_ozet, col_su = st.columns([3, 2])
@@ -1193,7 +1147,9 @@ else:
                             else:
                                 st.info("Henüz makro verisi yok.")
 
-                # --- SEKME 3: EGZERSİZ ---
+                # ===============================================
+                # TAB 3: EGZERSİZ
+                # ===============================================
                 with tab_egzersiz:
                     with st.container(border=True):
                         st.markdown("### 🏃 Egzersiz")
@@ -1261,7 +1217,7 @@ else:
                                         st.rerun()
 
             # ==========================================
-            # 5. KOÇLUK MERKEZİ SAYFASI
+            # 4. KOÇLUK MERKEZİ SAYFASI
             # ==========================================
             elif st.session_state.aktif_sayfa == "🤖 Koçluk Merkezi":
                 
