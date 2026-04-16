@@ -3,3 +3,4 @@ google-generativeai
 firebase-admin
 pandas
 plotly
+Pillow
