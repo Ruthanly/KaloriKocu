@@ -5,12 +5,14 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 import datetime
+import io # Fotoğrafı bellekte küçültmek için lazım
 
 # Firebase kütüphaneleri
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore
 from PIL import Image
+import re # regex kütüphanesi eksikti, okuyucu için gerekli
 
 try:
     import pandas as pd
@@ -52,18 +54,22 @@ def admin_kontrol():
 admin_kontrol()
 
 # ==========================================
-# 1. AYARLAR VE YAPAY ZEKA
+# 1. AYARLAR VE YAPAY ZEKA (MALİYET OPTİMİZASYONU EKLENDİ)
 # ==========================================
 # Anahtarı doğrudan yazmak yerine Streamlit Secrets'tan güvenli bir şekilde çekiyoruz
 API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
+# --- MALİYET DÜŞÜRME HAMLESİ 1 & 2 ---
+# Pahalı modeller yerine Flash kullanıyoruz ve token (kelime) sınırı koyuyoruz.
+generation_config = genai.GenerationConfig(
+    max_output_tokens=250, # Sadece JSON döndüreceği için fazla kelimeye para ödemeyiz
+    temperature=0.4
+)
+
 try:
-    calisan_modeller = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    if calisan_modeller:
-        model = genai.GenerativeModel(calisan_modeller[0])
-    else:
-        model = None
+    # Otomatik pahalı modeli seçmek yerine flash modeline sabitliyoruz
+    model = genai.GenerativeModel('gemini-1.5-flash', generation_config=generation_config)
 except Exception:
     model = None
 
@@ -730,6 +736,12 @@ else:
                         if st.button("🚀 Analiz Et ve Makroları Hesapla", type="primary", use_container_width=True):
                             st.session_state.kaydedilecek_ogun_tipi = ogun_tipi_foto
                             with st.spinner("AI fotoğrafa bakıyor ve makroları hesaplıyor..."):
+                                
+                                # --- MALİYET DÜŞÜRME HAMLESİ 3: FOTOĞRAFI KÜÇÜLT ---
+                                # API'ye büyük fotoğraf göndermek faturayı şişirir. Analiz için 512px fazlasıyla yeterlidir.
+                                img_ai = img.copy()
+                                img_ai.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                                
                                 ek_bilgi = f"Kullanıcı bu yemeğin '{ipucu}' olduğunu belirtti. Bu ipucundaki olası yazım ve dilbilgisi hatalarını arka planda otomatik olarak düzelt (düzeltirken KESİNLİKLE kısaltma veya özetleme yapma, içeriği tam koru). Sonra bu bilgiyi fotoğrafla eşleştirerek porsiyon ve gramaj tahmini yap." if ipucu else "Yemeği kendin tanı ve porsiyon tahmini yap."
                                 prompt = f"""
                                 Kullanıcı {st.session_state.kaydedilecek_ogun_tipi} olarak ekteki fotoğrafı yükledi.
@@ -746,7 +758,7 @@ else:
                                 ]
                                 """
                                 try:
-                                    res = model.generate_content([prompt, img])
+                                    res = model.generate_content([prompt, img_ai])
                                     cevap = res.text.strip()
                                     
                                     if "```json" in cevap:
