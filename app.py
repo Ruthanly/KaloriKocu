@@ -9,7 +9,7 @@ import datetime
 import io 
 import re 
 import base64
-import ast # YAPAY ZEKA JSON HATALARI İÇİN YEDEK MOTOR EKLENDİ
+import ast
 
 try:
     import pandas as pd
@@ -43,10 +43,7 @@ div[role="radiogroup"] > label[data-checked="true"] p { color: #1e1e1e !importan
 }
 
 /* Profil Fotoğrafı Hover Etkisi Engelleme */
-img.custom-pp {
-    cursor: default !important;
-    pointer-events: none !important;
-}
+img.custom-pp { cursor: default !important; pointer-events: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -86,25 +83,26 @@ if st.session_state.panel_kapat:
     st.session_state.panel_kapat = False
 
 def json_temizle_ve_oku(metin):
-    """AI'dan gelen kirli metni temizler ve ÇİFT GÜVENLİK AĞI ile JSON'a çevirir."""
-    # Olası markdown bloklarını temizle
-    metin = re.sub(r'```json\s*|```\s*', '', metin)
-    bas = metin.find('[')
-    son = metin.rfind(']') + 1
-    if bas != -1 and son != 0:
-        metin = metin[bas:son]
-    
-    metin = metin.replace('\n', ' ').replace('\r', '').replace('\t', ' ').strip()
-    
+    """Yapay zekadan gelen metni güvenli bir şekilde JSON formatına çevirir."""
     try:
-        # Birinci Motor: Standart JSON okuyucu
+        # Önce doğrudan okumayı dener (API application/json ile gönderdiği için genelde sorunsuz çalışır)
         return json.loads(metin)
     except json.JSONDecodeError:
+        # Eğer Markdown veya format hatası varsa temizlik yapar
+        metin = re.sub(r'```json\s*|```\s*', '', metin)
+        bas = metin.find('[')
+        son = metin.rfind(']') + 1
+        if bas != -1 and son != 0:
+            metin = metin[bas:son]
+        
+        # İçerideki kaçak satır atlamalarını temizler (Unterminated string hatası çözümü)
+        metin = metin.replace('\n', ' ').replace('\r', '')
+        
         try:
-            # İkinci Motor: Tek tırnak vb. hataları affeden yedek paraşüt
+            return json.loads(metin)
+        except Exception:
+            # Son çare olarak Python'un esnek okuyucusunu kullanır
             return ast.literal_eval(metin)
-        except Exception as e:
-            raise Exception(f"Sistem yemeği algıladı ancak makro verilerini listeye çeviremedi. Format Bozukluğu: {e}")
 
 def gorsel_ilerleme(gercek_oran):
     """Küçük adımları büyük gösteren motivasyon barı (En az %5)"""
@@ -117,11 +115,11 @@ def gorsel_ilerleme(gercek_oran):
 API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
-# NÜKLEER SEÇENEK: AI'ı kesinlikle JSON vermeye zorlayan komutlar
+# AI SADECE JSON VERECEK ŞEKİLDE KİLİTLENDİ
 generation_config = genai.GenerationConfig(
     max_output_tokens=1000, 
-    temperature=0.1, # Halüsinasyon ihtimalini sıfıra yaklaştırmak için düşürüldü
-    response_mime_type="application/json" # AI SADECE GEÇERLİ JSON ÜRETECEK
+    temperature=0.1, 
+    response_mime_type="application/json"
 )
 
 try:
@@ -143,7 +141,9 @@ YAYGIN_YEMEKLER = [
     "Kola", "Meyve Suyu", "Maden Suyu", "Baklava", "Sütlaç", "Kazandibi", "Profiterol", "Dondurma", "Çikolata", "Ceviz", "Fındık", "Badem"
 ]
 
-# --- LOGIN / REGISTER EKRANI ---
+# ==========================================
+# 2. LOGIN / REGISTER EKRANI
+# ==========================================
 if st.session_state.aktif_kullanici is None:
     st.markdown("<h1 style='text-align: center; color: #2ecc71; margin-top: 50px;'>🍏 Kalori ve Koçluk Merkezi</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: gray;'>Devam etmek için lütfen giriş yapın veya kayıt olun.</p>", unsafe_allow_html=True)
@@ -190,7 +190,9 @@ if st.session_state.aktif_kullanici is None:
                         })
                         st.success("Kayıt başarılı! Giriş yapabilirsiniz.")
 
-# --- ANA UYGULAMA ---
+# ==========================================
+# 3. ANA UYGULAMA (YÖNLENDİRME)
+# ==========================================
 else:
     kullanici_adi = st.session_state.aktif_kullanici
     is_admin_viewing = False
@@ -219,16 +221,17 @@ else:
         bulunan_sayisi = 0
         
         for hesap in hesaplar:
-            if hesap.id == "admin": continue
+            kadi = hesap.id
+            if kadi == "admin": continue
                 
-            veri_doc = db_firestore.collection("kullanici_verileri").document(hesap.id).get()
+            veri_doc = db_firestore.collection("kullanici_verileri").document(kadi).get()
             u_data = veri_doc.to_dict() if veri_doc.exists else {}
             profil = u_data.get("profil", {})
             gecmis = u_data.get("gecmis", {})
             
-            isim = profil.get("isim", hesap.id)
+            isim = profil.get("isim", kadi)
             
-            if arama_metni and (arama_metni not in hesap.id.lower() and arama_metni not in isim.lower()):
+            if arama_metni and (arama_metni not in kadi.lower() and arama_metni not in isim.lower()):
                 continue
                 
             bulunan_sayisi += 1
@@ -248,7 +251,7 @@ else:
             
             foto_b64 = profil.get("foto_base64", "")
             
-            with st.expander(f"👤 {isim} (@{hesap.id})   |   ⚖️ Güncel: {kilo} kg   |   📅 Aktif: {kayitli_gun} Gün"):
+            with st.expander(f"👤 {isim} (@{kadi})   |   ⚖️ Güncel: {kilo} kg   |   📅 Aktif: {kayitli_gun} Gün"):
                 
                 if foto_b64:
                     pp_col, info_col = st.columns([1, 8])
@@ -277,17 +280,17 @@ else:
                     
                     with a_c1:
                         st.markdown("**🔐 Şifre Değiştir**")
-                        yeni_sifre = st.text_input("Kullanıcının Yeni Şifresi", value=sifre_text, key=f"sif_{hesap.id}")
-                        if st.button("Şifreyi Güncelle", key=f"btn_sif_{hesap.id}", use_container_width=True):
-                            db_firestore.collection("hesaplar").document(hesap.id).update({"sifre": yeni_sifre})
+                        yeni_sifre = st.text_input("Kullanıcının Yeni Şifresi", value=sifre_text, key=f"sif_{kadi}")
+                        if st.button("Şifreyi Güncelle", key=f"btn_sif_{kadi}", use_container_width=True):
+                            db_firestore.collection("hesaplar").document(kadi).update({"sifre": yeni_sifre})
                             st.success("Şifre başarıyla güncellendi!")
                             st.rerun()
                             
                     with a_c2:
                         st.markdown("**🏷️ Kullanıcı Adı Değiştir**")
-                        yeni_kadi = st.text_input("Yeni Kullanıcı Adı", value=hesap.id, key=f"kad_{hesap.id}")
-                        if st.button("Kullanıcı Adını Değiştir", key=f"btn_kad_{hesap.id}", use_container_width=True):
-                            if yeni_kadi == hesap.id:
+                        yeni_kadi = st.text_input("Yeni Kullanıcı Adı", value=kadi, key=f"kad_{kadi}")
+                        if st.button("Kullanıcı Adını Değiştir", key=f"btn_kad_{kadi}", use_container_width=True):
+                            if yeni_kadi == kadi:
                                 st.warning("Mevcut kullanıcı adını girdiniz.")
                             elif " " in yeni_kadi:
                                 st.error("Kullanıcı adında boşluk olamaz!")
@@ -302,15 +305,15 @@ else:
                                     db_firestore.collection("hesaplar").document(yeni_kadi).set(eski_hesap_veri)
                                     db_firestore.collection("kullanici_verileri").document(yeni_kadi).set(u_data)
                                     
-                                    db_firestore.collection("hesaplar").document(hesap.id).delete()
-                                    db_firestore.collection("kullanici_verileri").document(hesap.id).delete()
+                                    db_firestore.collection("hesaplar").document(kadi).delete()
+                                    db_firestore.collection("kullanici_verileri").document(kadi).delete()
                                     
                                     st.success("Kullanıcı adı başarıyla değiştirildi ve veriler aktarıldı!")
                                     st.rerun()
                                     
                     st.divider()
-                    if st.button("🔍 Kullanıcının Panelini İncele", key=f"view_{hesap.id}", type="primary", use_container_width=True):
-                        st.session_state.incelenen_kullanici = hesap.id
+                    if st.button("🔍 Kullanıcının Panelini İncele", key=f"view_{kadi}", type="primary", use_container_width=True):
+                        st.session_state.incelenen_kullanici = kadi
                         st.session_state.panel_kapat = True
                         st.rerun()
 
@@ -415,11 +418,14 @@ else:
             st.markdown(f"<h3 style='text-align:center; margin-top:10px;'>{isim}</h3>", unsafe_allow_html=True)
             
             if not is_admin_viewing:
-                c_sb1, c_sb2 = st.columns(2)
-                if c_sb1.button("⚙️ Ayarlar", use_container_width=True): 
-                    st.session_state.aktif_sayfa = "Hesap Ayarları"; st.session_state.panel_kapat = True; st.rerun()
-                if c_sb2.button("🚪 Çıkış", use_container_width=True): 
-                    st.session_state.aktif_kullanici = None; st.rerun()
+                col_y_1, col_y_2 = st.columns(2)
+                if col_y_1.button("⚙️ Ayarlar", use_container_width=True): 
+                    st.session_state.aktif_sayfa = "Hesap Ayarları"
+                    st.session_state.panel_kapat = True
+                    st.rerun()
+                if col_y_2.button("🚪 Çıkış", use_container_width=True, type="primary"): 
+                    st.session_state.aktif_kullanici = None
+                    st.rerun()
 
             st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
             
@@ -494,7 +500,7 @@ else:
                     col_btn1, col_btn2 = st.columns(2)
                     if col_btn1.button("🔄 Sıfırla", use_container_width=True):
                         profil_sil("kilo"); profil_sil("son_kilo_guncelleme"); st.rerun()
-                    if col_btn2.button("💾 Kaydet", use_container_width=True):
+                    if col_btn2.button("💾 Kaydet", use_container_width=True, type="primary"):
                         db["profil"]["kilo"] = yeni_gkilo
                         db["profil"]["son_kilo_guncelleme"] = str(datetime.date.today())
                         doc_ref.set(db); st.success("Güncellendi!"); st.rerun()
@@ -665,7 +671,7 @@ else:
                                 st.info(st.session_state.onay_bekleyen_metin.replace('\n', '\n\n'))
                                 c_evet, c_hayir = st.columns(2)
                                 
-                                if c_evet.button("✅ Evet (Tabağa Ekle)", use_container_width=True):
+                                if c_evet.button("✅ Evet (Tabağa Ekle)", use_container_width=True, type="primary"):
                                     yeni_ogun = {
                                         "tip": st.session_state.kaydedilecek_ogun_tipi, 
                                         "kalemler": st.session_state.json_veri, 
@@ -712,11 +718,10 @@ else:
                                         if st.button("🚀 Tabağı İncele ve Hesapla", type="primary", use_container_width=True):
                                             st.session_state.kaydedilecek_ogun_tipi = ogun_tipi
                                             with st.spinner("AI hesaplıyor..."):
+                                                # TEMİZ JSON PROMPTU
                                                 prompt = f"""Kullanıcı yediği menü: {", ".join(st.session_state.tabak_listesi)}. 
-                                                Görev: Tüm yiyeceklerin kalori, Protein(p), Karb(c), Yağ(y) değerlerini hesapla.
-                                                SADECE VE SADECE JSON DİZİSİ (ARRAY) OLARAK YANIT VER.
-                                                DİKKAT: JSON formatını bozacak tek tırnak veya alt satıra geçiş kullanma.
-                                                Örnek: [{{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}]"""
+                                                Tüm yiyeceklerin kalori, Protein(p), Karb(c), Yağ(y) değerlerini hesapla ve DİZİ formatında döndür.
+                                                Örnek Format: [{{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}]"""
                                                 try:
                                                     res = model.generate_content(prompt)
                                                     v_list = json_temizle_ve_oku(res.text)
@@ -728,7 +733,7 @@ else:
                                                     st.session_state.json_veri = v_list
                                                     st.session_state.onay_bekleyen_metin = metin
                                                     st.rerun()
-                                                except Exception as e: st.error(f"Hata: {e}")
+                                                except Exception as e: st.error(f"AI Hatası: {e}")
 
                                 with t_foto:
                                     st.info("📸 Fotoğrafı yükle, gerisini AI halletsin!")
@@ -745,10 +750,9 @@ else:
                                                 img.thumbnail((512, 512), Image.Resampling.LANCZOS)
                                                 ek_b = f"Bu yemeğin '{ipucu}' olduğu belirtildi. " if ipucu else ""
                                                 
-                                                prompt = f"""{ek_b}Fotoğraftaki yiyecekleri tespit et, porsiyon tahmini yap ve değerlerini hesapla.
-                                                SADECE VE SADECE JSON DİZİSİ (ARRAY) OLARAK YANIT VER.
-                                                DİKKAT: JSON formatını bozacak tek tırnak veya alt satıra geçiş kullanma.
-                                                Örnek: [{{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}]"""
+                                                # TEMİZ JSON PROMPTU
+                                                prompt = f"""{ek_b}Fotoğraftaki yiyecekleri tespit et, porsiyon tahmini yap ve değerlerini hesapla. JSON formatında DİZİ olarak döndür.
+                                                Örnek Format: [{{"ad": "1 Porsiyon Pilav", "kalori": 250, "p": 5, "c": 40, "y": 5}}]"""
                                                 try:
                                                     res = model.generate_content([prompt, img])
                                                     v_list = json_temizle_ve_oku(res.text)
@@ -787,7 +791,7 @@ else:
                             for m_idx, ogun in enumerate(gunluk_veri["ogünler"]):
                                 with st.container(border=True):
                                     c_bas, c_sil = st.columns([4, 1])
-                                    c_bas.markdown(f"#### 🥘 {ogun['tip']} ({ogun.get('toplam_kalori', 0)} kcal | {ogun.get('toplam_p',0)}P - {ogun.get('toplam_c',0)}K - {ogun.get('toplam_y',0)}Y)")
+                                    c_bas.markdown(f"#### 🥘 {ogun['tip']} ({ogun.get('toplam_kalori', 0)} kcal)")
                                     if not is_admin_viewing and c_sil.button("🗑️ Sil", key=f"d_o_{m_idx}"):
                                         gunluk_veri["ogünler"].pop(m_idx); gunluk_toplam_guncelle(islem_tarihi); st.rerun()
                                         
@@ -917,7 +921,7 @@ else:
                                     db["gecmis"][islem_tarihi]["yakilan_kalori"] += mx_kal; doc_ref.set(db); st.rerun()
 
             # ==========================================
-            # KOÇLUK MERKEZİ SAYFASI
+            # 4. KOÇLUK MERKEZİ SAYFASI
             # ==========================================
             elif st.session_state.aktif_sayfa == "🤖 Koçluk Merkezi":
                 t_acik, t_gun = 0, 0
