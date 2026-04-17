@@ -144,12 +144,12 @@ try:
     flash_modelleri = [m for m in calisan_modeller if 'flash' in m.lower()]
     secilen_model = flash_modelleri[0] if flash_modelleri else 'gemini-1.5-flash-latest'
     
-    # MOTOR 1: SADECE YEMEK VE EGZERSİZ İÇİN KATI JSON FORMATI
+    # MOTOR 1: JSON
     config_json = genai.GenerationConfig(max_output_tokens=2500, temperature=0.1, response_mime_type="application/json")
     model_json = genai.GenerativeModel(secilen_model, generation_config=config_json)
     
-    # MOTOR 2: SADECE KOÇLUK VE SOHBET İÇİN SERBEST FORMAT
-    config_sohbet = genai.GenerationConfig(max_output_tokens=2500, temperature=0.5)
+    # MOTOR 2: SOHBET
+    config_sohbet = genai.GenerationConfig(max_output_tokens=5000, temperature=0.5)
     model_sohbet = genai.GenerativeModel(secilen_model, generation_config=config_sohbet)
 except Exception:
     model_json = None
@@ -370,8 +370,9 @@ else:
                 if st.button("⬅️ Admin Paneline Dön", type="primary", use_container_width=True):
                     st.session_state.incelenen_kullanici = None; st.session_state.panel_kapat = True; st.rerun()
             
-            if p.get("foto_base64"):
-                st.markdown(f'<div style="text-align:center;"><img src="data:image/png;base64,{p["foto_base64"]}" class="custom-pp" style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:3px solid #2ecc71;"></div>', unsafe_allow_html=True)
+            foto_b64_user = p.get("foto_base64", "")
+            if foto_b64_user:
+                st.markdown(f'<div style="text-align:center;"><img src="data:image/png;base64,{foto_b64_user}" class="custom-pp" style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:3px solid #2ecc71;"></div>', unsafe_allow_html=True)
             else:
                 avatar_simgesi = "👨‍💼" if cinsiyet == "Erkek" else "👩‍💼"
                 st.markdown(f'<div style="text-align:center; font-size:75px; line-height:1;">{avatar_simgesi}</div>', unsafe_allow_html=True)
@@ -380,8 +381,10 @@ else:
             
             if not is_admin_viewing:
                 c_sb1, c_sb2 = st.columns(2)
-                if c_sb1.button("⚙️ Ayarlar", use_container_width=True): st.session_state.aktif_sayfa = "Hesap Ayarları"; st.session_state.panel_kapat = True; st.rerun()
-                if c_sb2.button("🚪 Çıkış", use_container_width=True, type="primary"): st.session_state.aktif_kullanici = None; st.rerun()
+                if c_sb1.button("⚙️ Ayarlar", use_container_width=True): 
+                    st.session_state.aktif_sayfa = "Hesap Ayarları"; st.session_state.panel_kapat = True; st.rerun()
+                if c_sb2.button("🚪 Çıkış", use_container_width=True, type="primary"): 
+                    st.session_state.aktif_kullanici = None; st.rerun()
 
             st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
             
@@ -442,6 +445,9 @@ else:
                 with c2: st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True); st.button("🗑️", key="del_hg", on_click=profil_sil, args=("hedef_gun",), disabled=is_admin_viewing)
                 
                 if not is_admin_viewing:
+                    hiz_tahmini = (baslangic - hedef_kilo) / hedef_gun if hedef_gun > 0 else 0
+                    if hiz_tahmini > 0.2:
+                        st.warning("💡 Öneri: Hedeflediğin kiloyu bu sürede vermek sağlık açısından zorlayıcı olabilir. Daha uzun bir süreye yaymak daha sağlıklı bir kilo kaybı sağlayabilir. Ancak seçim senin, hedefini bu şekilde de kaydedebilirsin.")
                     if st.button("💾 Kaydet", key="btn_kaydet_hedef", use_container_width=True, type="primary"):
                         verileri_kaydet(db); st.success("Hedefler kaydedildi!")
 
@@ -456,9 +462,9 @@ else:
                 <span style="color:#bdc3c7;">Gereken Günlük Açık:</span> <b style="color:#3498db; float:right;">{acik_olusturma} kcal</b>
             </div>
             """, unsafe_allow_html=True)
-
-            st.divider()
             
+            st.divider()
+            # YAN PANEL BAŞARI MERKEZİ (Geri Getirildi)
             toplam_acik_panel = sum(max(0, int(tdee) - (v.get("toplam", 0) - v.get("yakilan_kalori", 0))) for v in db["gecmis"].values() if v.get("toplam", 0) > 0)
             ilerleme_orani = max(0.0, min(toplam_acik_panel / hedef_toplam_acik, 1.0)) if hedef_toplam_acik > 0 else 0.0
             
@@ -466,7 +472,7 @@ else:
             m_c1, m_c2 = st.columns(2)
             m_c1.metric("Verilen", f"{verilen_kilo:.1f} kg")
             m_c2.metric("Kalan", f"{toplam_verilecek:.1f} kg")
-            st.progress(gorsel_ilerleme(ilerleme_orani), text=f"Hedefe Ulaşma: %{ilerleme_orani * 100:.4f}")
+            st.progress(gorsel_ilerleme(ilerleme_orani), text=f"Hedefe Ulaşma: %{ilerleme_orani * 100:.2f}")
 
         # --- SAYFA İÇERİĞİ YÖNLENDİRMELERİ ---
         if is_admin_viewing: st.warning(f"👁️ İZLEME MODU: Kullanıcı **{kullanici_adi}** paneli görüntüleniyor.")
@@ -477,50 +483,76 @@ else:
             
             if is_admin_viewing: st.error("Admin olarak bu işlemi yapamazsınız.")
             else:
-                tab_h1, tab_h2, tab_h3 = st.tabs(["📸 Fotoğraf", "🔐 Şifre", "🏷️ Kullanıcı Adı"])
+                if st.session_state.foto_mesaj:
+                    st.success(st.session_state.foto_mesaj)
+                    st.session_state.foto_mesaj = None 
+
+                tab_h1, tab_h2, tab_h3 = st.tabs(["📸 Profil Fotoğrafı", "🔐 Şifre", "🏷️ Kullanıcı Adı"])
                 with tab_h1:
-                    up_pp = st.file_uploader("Fotoğraf Seç (JPG/PNG)", type=["png", "jpg", "jpeg"])
-                    if up_pp and st.button("💾 Kaydet", use_container_width=True, type="primary"):
-                        img = Image.open(up_pp); img.thumbnail((250, 250))
-                        buf = io.BytesIO(); img.save(buf, format="PNG")
-                        db["profil"]["foto_base64"] = base64.b64encode(buf.getvalue()).decode()
-                        verileri_kaydet(db); st.success("Güncellendi!"); st.rerun()
-                    if p.get("foto_base64") and st.button("🗑️ Kaldır", use_container_width=True):
-                        del db["profil"]["foto_base64"]; verileri_kaydet(db); st.rerun()
+                    st.markdown("#### 📸 Profil Fotoğrafı")
+                    with st.container(border=True):
+                        up_pp = st.file_uploader("Fotoğraf Seç (JPG/PNG)", type=["png", "jpg", "jpeg"])
+                        col_p1, col_p2 = st.columns(2)
+                        if up_pp and col_p1.button("💾 Kaydet", use_container_width=True, type="primary"):
+                            try:
+                                img = Image.open(up_pp); img.thumbnail((250, 250))
+                                buf = io.BytesIO(); img.save(buf, format="PNG")
+                                db["profil"]["foto_base64"] = base64.b64encode(buf.getvalue()).decode()
+                                verileri_kaydet(db)
+                                st.session_state.db = db 
+                                st.session_state.foto_mesaj = "✅ Profil fotoğrafı başarıyla kaydedildi!"
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Fotoğraf kaydedilemedi. Lütfen tekrar deneyin: {e}")
+                                
+                        if p.get("foto_base64") and col_p2.button("🗑️ Kaldır", use_container_width=True):
+                            del db["profil"]["foto_base64"]
+                            verileri_kaydet(db)
+                            st.session_state.db = db
+                            st.session_state.foto_mesaj = "🗑️ Profil fotoğrafı başarıyla kaldırıldı."
+                            st.rerun()
 
                 with tab_h2:
-                    s1 = st.text_input("Mevcut Şifre", type="password")
-                    s2 = st.text_input("Yeni Şifre", type="password")
-                    s3 = st.text_input("Yeni Şifre (Tekrar)", type="password")
-                    if st.button("🔐 Şifreyi Güncelle", use_container_width=True):
-                        g_sif = db_firestore.collection("hesaplar").document(kullanici_adi).get().to_dict().get("sifre", "")
-                        if s1 != g_sif: st.error("Şifre yanlış!")
-                        elif not s2 or s2 != s3: st.error("Yeni şifreler eşleşmiyor!")
-                        else:
-                            db_firestore.collection("hesaplar").document(kullanici_adi).update({"sifre": s2})
-                            st.session_state.aktif_kullanici = None; st.success("Değiştirildi! Tekrar giriş yapın."); st.rerun()
+                    st.markdown("#### 🔐 Şifre İşlemleri")
+                    with st.container(border=True):
+                        s1 = st.text_input("Mevcut Şifre", type="password")
+                        s2 = st.text_input("Yeni Şifre", type="password")
+                        s3 = st.text_input("Yeni Şifre (Tekrar)", type="password")
+                        if st.button("Şifreyi Güncelle", use_container_width=True):
+                            g_sif = db_firestore.collection("hesaplar").document(kullanici_adi).get().to_dict().get("sifre", "")
+                            if s1 != g_sif: st.error("Şifre yanlış!")
+                            elif not s2 or s2 != s3: st.error("Yeni şifreler eşleşmiyor!")
+                            else:
+                                db_firestore.collection("hesaplar").document(kullanici_adi).update({"sifre": s2})
+                                st.session_state.aktif_kullanici = None; st.success("Değiştirildi! Tekrar giriş yapın."); st.rerun()
 
                 with tab_h3:
-                    k1 = st.text_input("Mevcut Kullanıcı Adı").strip().lower()
-                    k2 = st.text_input("Yeni Kullanıcı Adı").strip().lower()
-                    k3 = st.text_input("Yeni Ad (Tekrar)").strip().lower()
-                    if st.button("🏷️ Kullanıcı Adını Güncelle", use_container_width=True):
-                        if k1 != kullanici_adi: st.error("Ad yanlış!")
-                        elif " " in k2 or not k2: st.error("Boşluk olamaz!")
-                        elif k2 != k3: st.error("Eşleşmiyor!")
-                        elif db_firestore.collection("hesaplar").document(k2).get().exists: st.error("Alınmış!")
-                        else:
-                            e_veri = db_firestore.collection("hesaplar").document(kullanici_adi).get().to_dict()
-                            db_firestore.collection("hesaplar").document(k2).set(e_veri)
-                            db_firestore.collection("kullanici_verileri").document(k2).set(db)
-                            db_firestore.collection("hesaplar").document(kullanici_adi).delete()
-                            db_firestore.collection("kullanici_verileri").document(kullanici_adi).delete()
-                            st.session_state.aktif_kullanici = None; st.success("Değiştirildi! Tekrar giriş yapın."); st.rerun()
+                    st.markdown("#### 🏷️ Kullanıcı Adı İşlemleri")
+                    with st.container(border=True):
+                        k1 = st.text_input("Mevcut Kullanıcı Adı").strip().lower()
+                        k2 = st.text_input("Yeni Kullanıcı Adı").strip().lower()
+                        k3 = st.text_input("Yeni Ad (Tekrar)").strip().lower()
+                        if st.button("Kullanıcı Adını Güncelle", use_container_width=True):
+                            if k1 != kullanici_adi: st.error("Ad yanlış!")
+                            elif " " in k2 or not k2: st.error("Boşluk olamaz!")
+                            elif k2 != k3: st.error("Eşleşmiyor!")
+                            elif db_firestore.collection("hesaplar").document(k2).get().exists: st.error("Alınmış!")
+                            else:
+                                e_veri = db_firestore.collection("hesaplar").document(kullanici_adi).get().to_dict()
+                                db_firestore.collection("hesaplar").document(k2).set(e_veri)
+                                db_firestore.collection("kullanici_verileri").document(k2).set(db)
+                                db_firestore.collection("hesaplar").document(kullanici_adi).delete()
+                                db_firestore.collection("kullanici_verileri").document(kullanici_adi).delete()
+                                st.session_state.aktif_kullanici = None; st.success("Değiştirildi! Tekrar giriş yapın."); st.rerun()
 
         # ANA İŞLEM SAYFALARI
         else:
-            # ŞIK VE KOMPAKT iOS TARZI MENÜ
-            st.radio("Navigasyon:", ["📅 Günlük Takip", "🤖 Koçluk Merkezi"], key="aktif_sayfa", horizontal=True, label_visibility="collapsed")
+            nav_index = 0 if st.session_state.aktif_sayfa == "📅 Günlük Takip" else 1
+            secilen_nav = st.radio("Navigasyon:", ["📅 Günlük Takip", "🤖 Koçluk Merkezi"], index=nav_index, horizontal=True, label_visibility="collapsed")
+            
+            if secilen_nav != st.session_state.aktif_sayfa:
+                st.session_state.aktif_sayfa = secilen_nav
+                st.rerun()
             
             if st.session_state.aktif_sayfa == "📅 Günlük Takip":
                 if 'secili_tarih' not in st.session_state: st.session_state.secili_tarih = datetime.date.today()
@@ -556,11 +588,11 @@ else:
                     
                     dun_net = max(0, dun_v.get("toplam", 0) - dun_v.get("yakilan_kalori", 0))
                     if dun_v.get("toplam", 0) > 0: 
-                        fark = dun_net - orijinal_gunluk_limit
+                        fark = dun_net - int(tdee)
                         if fark > 0:
                             telafi = fark // 3
-                            gunluk_limit = orijinal_gunluk_limit - telafi 
-                            st.warning(f"⚖️ Dün hedefini **{fark} kcal** aştın. Bugünkü hedeften **{telafi} kcal** kısıldı.")
+                            gunluk_limit = int(tdee) - telafi 
+                            st.warning(f"⚖️ Dün TDEE hedefini **{fark} kcal** aştın. Bugünkü hedeften **{telafi} kcal** kısıldı.")
 
                 # ALT SEKMELER
                 tab_ekle, tab_ozet, tab_egzersiz = st.tabs(["🍽️ Yiyecek Ekle & Menü", "📊 Günlük Özet & Su", "🏃 Egzersiz"])
@@ -678,11 +710,9 @@ else:
                                                 
                                                 res = model_json.generate_content(prompt)
                                                 v_list = guvenli_json_oku(res.text)
-                                                
                                                 metin = ""
                                                 for item in v_list: metin += f"- {item.get('ad','Bilinmeyen')}: **{item.get('kalori',0)} kcal** | {item.get('p',0)}P | {item.get('c',0)}K | {item.get('y',0)}Y\n"
                                                 metin += f"\n**TOPLAM: {sum(x.get('kalori',0) for x in v_list)} kcal**"
-                                                
                                                 st.session_state.json_veri = v_list
                                                 st.session_state.onay_bekleyen_metin = metin
                                                 st.rerun()
@@ -764,22 +794,13 @@ else:
                             m1, m2, m3 = st.columns(3)
                             ap, ac, ay = db["gecmis"][islem_tarihi].get("toplam_p", 0), db["gecmis"][islem_tarihi].get("toplam_c", 0), db["gecmis"][islem_tarihi].get("toplam_y", 0)
                             
-                            if ap > hedef_protein:
-                                m1.markdown(f"<span style='color:#e74c3c;'><b>Protein: {ap}g / {hedef_protein}g (Aşıldı!)</b></span>", unsafe_allow_html=True)
-                            else:
-                                m1.markdown(f"**Protein:** {ap}g / {hedef_protein}g")
+                            m1.markdown(f"<span style='color:#e74c3c;'><b>Protein: {ap}g / {hedef_protein}g (Aşıldı!)</b></span>" if ap > hedef_protein else f"**Protein:** {ap}g / {hedef_protein}g", unsafe_allow_html=True)
                             m1.progress(min(ap / hedef_protein if hedef_protein > 0 else 0, 1.0))
                             
-                            if ac > hedef_karb:
-                                m2.markdown(f"<span style='color:#e74c3c;'><b>Karb: {ac}g / {hedef_karb}g (Aşıldı!)</b></span>", unsafe_allow_html=True)
-                            else:
-                                m2.markdown(f"**Karb:** {ac}g / {hedef_karb}g")
+                            m2.markdown(f"<span style='color:#e74c3c;'><b>Karb: {ac}g / {hedef_karb}g (Aşıldı!)</b></span>" if ac > hedef_karb else f"**Karb:** {ac}g / {hedef_karb}g", unsafe_allow_html=True)
                             m2.progress(min(ac / hedef_karb if hedef_karb > 0 else 0, 1.0))
                             
-                            if ay > hedef_yag:
-                                m3.markdown(f"<span style='color:#e74c3c;'><b>Yağ: {ay}g / {hedef_yag}g (Aşıldı!)</b></span>", unsafe_allow_html=True)
-                            else:
-                                m3.markdown(f"**Yağ:** {ay}g / {hedef_yag}g")
+                            m3.markdown(f"<span style='color:#e74c3c;'><b>Yağ: {ay}g / {hedef_yag}g (Aşıldı!)</b></span>" if ay > hedef_yag else f"**Yağ:** {ay}g / {hedef_yag}g", unsafe_allow_html=True)
                             m3.progress(min(ay / hedef_yag if hedef_yag > 0 else 0, 1.0))
 
                         with col_su:
@@ -853,11 +874,11 @@ else:
                                 if x_sec == "Adım Sayısı":
                                     x_sure = st.number_input("Atılan Adım Sayısı:", 100, 50000, 5000, step=500)
                                     sure_birim = "adım"
-                                    prm_txt = f"Kullanıcı: {kilo}kg,{boy}cm,{yas}yaş. Yaptığı: {x_sure} adım yürüyüş. SADECE AŞAĞIDAKİ JSON FORMATINDA YANIT VER: {{\"kalori\": 250}}"
+                                    prm_txt = f"Kullanıcı: {kilo}kg,{boy}cm,{yas}yaş. Yaptığı: {x_sure} adım yürüyüş. SADECE AŞAĞIDAKİ JSON FORMATINDA YANIT VER: [{{\"kalori\": 250}}]"
                                 else:
                                     x_sure = st.number_input("Süre (Dk):", 1, 600, 30, step=5)
                                     sure_birim = "dk"
-                                    prm_txt = f"Kullanıcı: {kilo}kg,{boy}cm,{yas}yaş. Yaptığı: {x_sure}dk {x_ad}. SADECE AŞAĞIDAKİ JSON FORMATINDA YANIT VER: {{\"kalori\": 250}}"
+                                    prm_txt = f"Kullanıcı: {kilo}kg,{boy}cm,{yas}yaş. Yaptığı: {x_sure}dk {x_ad}. SADECE AŞAĞIDAKİ JSON FORMATINDA YANIT VER: [{{\"kalori\": 250}}]"
                                 
                                 if st.button("🔥 Ekle", use_container_width=True) and x_ad:
                                     with st.spinner("Hesaplanıyor..."):
@@ -880,10 +901,22 @@ else:
             # 4. KOÇLUK MERKEZİ SAYFASI
             # ==========================================
             elif st.session_state.aktif_sayfa == "🤖 Koçluk Merkezi":
-                t_acik, t_gun = 0, 0
+                t_acik, t_gun, t_su, t_p, t_c, t_y, t_ex_dk, t_ex_adim, t_ex_kcal = 0, 0, 0.0, 0, 0, 0, 0, 0, 0
                 for v in db["gecmis"].values():
                     net = v.get("toplam", 0) - v.get("yakilan_kalori", 0)
-                    if v.get("toplam", 0) > 0: t_acik += int(tdee) - net; t_gun += 1
+                    if v.get("toplam", 0) > 0: 
+                        t_acik += int(tdee) - net
+                        t_gun += 1
+                        t_su += v.get("su_litre", 0.0)
+                        t_p += v.get("toplam_p", 0)
+                        t_c += v.get("toplam_c", 0)
+                        t_y += v.get("toplam_y", 0)
+                        t_ex_kcal += v.get("yakilan_kalori", 0)
+                        for ex in v.get("egzersizler", []):
+                            if ex.get("birim") == "adım":
+                                t_ex_adim += int(ex.get("sure", 0))
+                            elif str(ex.get("sure", "")).isdigit(): 
+                                t_ex_dk += int(ex["sure"])
                         
                 vki = kilo / ((boy / 100) ** 2) if boy > 0 else 0
                 if vki < 18.5: drm, rnk, a_snr = "Zayıf", "#e74c3c", 0
@@ -892,21 +925,22 @@ else:
                 else: drm, rnk, a_snr = "Obez", "#e67e22", 29.9 * ((boy/100)**2)
 
                 c_koc_ust1, c_koc_ust2 = st.columns([1, 1])
+                ai_tetikle = False # Rapor kontrol değişkeni
                 
                 with c_koc_ust1:
                     with st.container(border=True):
                         st.markdown("#### 💬 AI Diyetisyen")
-                        st.caption("Verilerini analiz edip sana özel tavsiyeler verir.")
-                        
-                        if a_snr > 0:
-                            st.markdown("<div style='height: 65px;'></div>", unsafe_allow_html=True) 
+                        st.caption("Sana özel, veriye dayalı koçluk hizmeti.")
+                        st.markdown("""
+                        <div style='height: 90px; font-size:14px; color:#bdc3c7;'>
+                            <b>Neleri Analiz Eder?</b><br>
+                            • 📉 Kilo trendin ve kalori açığın<br>
+                            • 🥩 Makro dengen & 💧 Su tüketimin
+                        </div>
+                        """, unsafe_allow_html=True)
                             
-                        if not is_admin_viewing and st.button("🤖 Değerlendir", use_container_width=True, type="primary"):
-                            with st.spinner("İnceleniyor..."):
-                                try:
-                                    r = model_sohbet.generate_content(f"Kullanıcı {isim}. Boy:{boy}cm, Kilo:{kilo}kg (Başlangıç:{baslangic}kg), Hedef:{hedef_kilo}kg. VKİ:{vki:.1f}. Değerlendir ve samimi bir tavsiye ver.")
-                                    st.success("✅ Rapor Hazır"); st.write(r.text)
-                                except: st.error("Hata oluştu.")
+                        if not is_admin_viewing and st.button("🤖 Raporu Hazırla", use_container_width=True, type="primary"):
+                            ai_tetikle = True
                                     
                 with c_koc_ust2:
                     with st.container(border=True):
@@ -915,25 +949,58 @@ else:
                         st.caption(f"Normal aralık: **{18.5*((boy/100)**2):.1f} - {24.9*((boy/100)**2):.1f} kg**")
                         if a_snr > 0:
                             verilmesi_gereken = kilo - a_snr
-                            st.markdown(f"<div style='margin-top:8px; padding:10px; background-color:rgba(255,255,255,0.05); border-radius:8px; border-left:4px solid {rnk}; line-height:1.4;'>💡 Bir alt risk grubuna inmek için:<br>Hedef Kilo: <b style='color:#e74c3c;'>{a_snr:.1f} kg</b> (Ortalama <b>{verilmesi_gereken:.1f} kg</b> vermelisiniz)</div>", unsafe_allow_html=True)
+                            st.markdown(f"""
+                            <div style='height: 90px; margin-top:5px; padding:10px; background-color:rgba(255,255,255,0.05); border-radius:10px; border-left:5px solid {rnk}; line-height:1.4;'>
+                                <span style='font-size:14px;'>💡 <b>Bir alt risk grubu için:</b></span><br>
+                                Hedef Kilo: <b style='color:#e74c3c; font-size:15px;'>{a_snr:.1f} kg</b> (<b>{verilmesi_gereken:.1f} kg</b> verilmeli)
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div style='height: 90px; margin-top:5px; padding:10px; background-color:rgba(46,204,113,0.1); border-radius:10px; border-left:5px solid #2ecc71; line-height:1.4;'>
+                                <span style='font-size:14px;'>✅ <b>İdeal Aralık:</b></span><br>
+                                Harika gidiyorsun! Şu anki formunu korumaya odaklanabilirsin.
+                            </div>
+                            """, unsafe_allow_html=True)
 
+                # ===============================================
+                # AI DİYETİSYEN RAPORU (KUTULARI BOZMADAN AŞAĞIDA AÇILIR)
+                # ===============================================
+                if ai_tetikle:
+                    with st.container(border=True):
+                        st.markdown("#### 📝 AI Diyetisyen Raporu")
+                        with st.spinner("Tüm verilerin dikkatlice inceleniyor..."):
+                            try:
+                                r = model_sohbet.generate_content(f"Kullanıcı {isim}. Yaş:{yas}, Cins:{cinsiyet}, Boy:{boy}cm, Kilo:{kilo}kg. VKİ:{vki:.1f}. Kayıtlı gün:{t_gun}. Toplam Açık:{t_acik}kcal. Ortalama Su:{t_su/t_gun if t_gun>0 else 0:.1f}L/gün. Ortalama Makro: P:{t_p/t_gun if t_gun>0 else 0:.0f}g, C:{t_c/t_gun if t_gun>0 else 0:.0f}g, Y:{t_y/t_gun if t_gun>0 else 0:.0f}g. Egzersiz: Toplam {t_ex_dk}dk spor, {t_ex_adim} adım. Bunları dikkate alarak samimi, veriye dayalı bir analiz ve tavsiye ver.")
+                                st.write(r.text)
+                            except Exception as e:
+                                st.error("Hata oluştu, rapor üretilemedi.")
+
+                # ===============================================
+                # HIZ VE HEDEF TAHMİNİ 
+                # ===============================================
                 with st.container(border=True):
                     if t_gun > 3 and verilen_kilo > 0:
                         hiz = verilen_kilo / t_gun
                         kgun = int(toplam_verilecek / hiz) if hiz > 0 else 0
-                        st.success(f"🚀 Hızınız: **{hiz:.2f} kg/gün**. Hedefe kalan süre: **{kgun} gün ({(datetime.date.today() + datetime.timedelta(days=kgun)).strftime('%d.%m.%Y')})**")
-                    else: st.info("Hız tahmini için daha fazla düzenli gün girişine ihtiyaç var.")
+                        st.success(f"🚀 Hızınız: **{hiz:.2f} kg/gün**. Mevcut hızınızla hedefe kalan süre: **{kgun} gün ({(datetime.date.today() + datetime.timedelta(days=kgun)).strftime('%d.%m.%Y')})**")
+                    else:
+                        st.info("💡 Hız tahmini ve hedefe varış süresi için en az 4 günlük düzenli veri girişine ve kilo kaybına ihtiyaç var.")
 
-                with st.container(border=True):
-                    st.markdown("### 🏆 Detaylı Başarı Dashboard'u")
-                    cm1, cm2, cm3, cm4 = st.columns(4)
-                    cm1.metric("Verilen Kilo", f"{verilen_kilo:.1f} kg", f"{baslangic} kg'dan", delta_color="off")
-                    cm2.metric("Yakılan Yağ", f"{t_acik/7700 if t_acik>0 else 0:.2f} kg", "Tahmini", delta_color="off")
-                    cm3.metric("Kayıtlı Gün", f"{t_gun} Gün", delta_color="off")
-                    cm4.metric("Ortalama Açık", f"{int(t_acik/t_gun) if t_gun>0 else 0} kcal", "Gün/Ort", delta_color="off")
+                st.markdown("### 📊 Detaylı Analiz & Başarı Merkezi")
+                
+                # MODÜLER DASHBOARD SEKMELERİ
+                tab_genel, tab_su_egz, tab_makro = st.tabs(["📉 Genel İlerleme", "💧 Su & Egzersiz", "🥩 Makro Dağılımı"])
+                
+                with tab_genel:
+                    g_c1, g_c2, g_c3, g_c4 = st.columns(4)
+                    g_c1.metric("Verilen Kilo", f"{verilen_kilo:.1f} kg", f"{baslangic} kg'dan", delta_color="off")
+                    g_c2.metric("Gerçek Kalori Açığı", f"{int(t_acik)} kcal", "TDEE Üzerinden", delta_color="off", help="TDEE (Total Daily Energy Expenditure): Vücudunuzun bazal fonksiyonları ve günlük hareketlerinizle yaktığı toplam kalori. Açığınız bu değer üzerinden net ve gerçekçi olarak hesaplanır.")
+                    g_c3.metric("Tahmini Yakılan Yağ", f"{t_acik/7700 if t_acik>0 else 0:.2f} kg", "Net Açıkla", delta_color="off")
+                    g_c4.metric("Kayıtlı Gün", f"{t_gun} Gün", delta_color="off")
                     
                     i_oran = max(0.0, min(t_acik / hedef_toplam_acik, 1.0)) if hedef_toplam_acik > 0 else 0.0
-                    st.progress(gorsel_ilerleme(i_oran), text=f"Hedefe Ulaşma Oranı: %{i_oran * 100:.4f}")
+                    st.progress(gorsel_ilerleme(i_oran), text=f"Genel Hedefe Ulaşma Oranı: %{i_oran * 100:.4f}")
 
                     st.write("")
                     tarihler = sorted(list(db["gecmis"].keys()))[-7:]
@@ -945,8 +1012,70 @@ else:
                             nt = aln - ykl
                             df_data.append({"Tarih": t, "Net Kalori": nt, "Hedef Limit": int(orijinal_gunluk_limit)})
                         
-                        df = pd.DataFrame(df_data)
                         st.markdown("##### 📈 Son 7 Günlük Kalori Trendi")
-                        fig_trend = px.line(df, x="Tarih", y=["Net Kalori", "Hedef Limit"], markers=True, color_discrete_sequence=["#e74c3c", "#2ecc71"])
+                        fig_trend = px.line(pd.DataFrame(df_data), x="Tarih", y=["Net Kalori", "Hedef Limit"], markers=True, color_discrete_sequence=["#e74c3c", "#2ecc71"])
                         fig_trend.update_layout(margin=dict(t=10, b=0, l=0, r=0), height=300, legend_title_text='', xaxis_title="", yaxis_title="Kcal")
                         st.plotly_chart(fig_trend, use_container_width=True)
+
+                with tab_su_egz:
+                    s_c1, s_c2 = st.columns(2)
+                    with s_c1:
+                        st.markdown("#### 💧 Su Tüketimi")
+                        ort_su = t_su/t_gun if t_gun>0 else 0
+                        st.metric("Ortalama İçilen Su", f"{ort_su:.1f} L / Gün", f"Hedef: {hedef_su_litre} L/Gün", delta_color="off")
+                        if ort_su < hedef_su_litre * 0.9:
+                            st.warning(f"⚠️ Günlük su hedefine ({hedef_su_litre} L) ulaşmakta zorlanıyorsun. Vücudunu susuz bırakmamak için tüketimini artırmalısın!")
+                        else:
+                            st.success(f"✅ Harika! Günlük su hedefini ({hedef_su_litre} L) başarıyla tutturuyorsun.")
+                            
+                    with s_c2:
+                        st.markdown("#### 🏃 Egzersiz Özeti")
+                        adim_metni = f" (+ {t_ex_adim} Adım)" if t_ex_adim > 0 else ""
+                        st.metric("Toplam Egzersiz", f"{t_ex_dk} Dakika{adim_metni}")
+                        st.metric("Toplam Yakılan Kalori", f"{t_ex_kcal} kcal")
+
+                with tab_makro:
+                    st.markdown("#### 🥩 Makro Dağılımı (Tüm Zamanlar)")
+                    if (t_p+t_c+t_y) > 0:
+                        col_grafik, col_detay = st.columns([1, 1])
+                        with col_grafik:
+                            if GRAFIK_AKTIF:
+                                fig_m_genel = px.pie(pd.DataFrame([{"M":"Protein","G":t_p},{"M":"Karb","G":t_c},{"M":"Yağ","G":t_y}]), values="G", names="M", hole=0.5, color="M", color_discrete_map={"Protein":"#e74c3c","Karb":"#f1c40f","Yağ":"#3498db"})
+                                fig_m_genel.update_traces(textposition='inside', textinfo='percent+label'); fig_m_genel.update_layout(showlegend=False, margin=dict(t=0,b=0,l=0,r=0), height=250)
+                                st.plotly_chart(fig_m_genel, use_container_width=True)
+                        with col_detay:
+                            st.markdown("<br><br>", unsafe_allow_html=True)
+                            st.metric("🍗 Toplam Protein", f"{t_p} g")
+                            st.metric("🌾 Toplam Karbonhidrat", f"{t_c} g")
+                            st.metric("🥑 Toplam Yağ", f"{t_y} g")
+                            
+                        st.markdown("---")
+                        st.markdown("##### 💡 Günlük Ortalama Makro Analizi")
+                        ort_p = int(t_p / t_gun) if t_gun > 0 else 0
+                        ort_c = int(t_c / t_gun) if t_gun > 0 else 0
+                        ort_y = int(t_y / t_gun) if t_gun > 0 else 0
+                        
+                        mc1, mc2, mc3 = st.columns(3)
+                        with mc1:
+                            if ort_p < hedef_protein * 0.85:
+                                st.warning(f"📉 **Protein Düşük**\n\nOrt: {ort_p}g | Hedef: {hedef_protein}g\nKas kaybını önlemek için artırmalısın.")
+                            elif ort_p > hedef_protein * 1.15:
+                                st.info(f"📈 **Protein Yüksek**\n\nOrt: {ort_p}g | Hedef: {hedef_protein}g\nİhtiyacından fazlasını alıyorsun.")
+                            else:
+                                st.success(f"✅ **Protein İdeal**\n\nOrt: {ort_p}g | Hedef: {hedef_protein}g\nTam kararında gidiyorsun!")
+                        with mc2:
+                            if ort_c < hedef_karb * 0.85:
+                                st.warning(f"📉 **Karb Düşük**\n\nOrt: {ort_c}g | Hedef: {hedef_karb}g\nEnerjisiz hissediyorsan artırabilirsin.")
+                            elif ort_c > hedef_karb * 1.15:
+                                st.info(f"📈 **Karb Yüksek**\n\nOrt: {ort_c}g | Hedef: {hedef_karb}g\nKilo vermeyi yavaşlatabilir, dikkat et.")
+                            else:
+                                st.success(f"✅ **Karb İdeal**\n\nOrt: {ort_c}g | Hedef: {hedef_karb}g\nDengeli ve sağlıklı enerji!")
+                        with mc3:
+                            if ort_y < hedef_yag * 0.85:
+                                st.warning(f"📉 **Yağ Düşük**\n\nOrt: {ort_y}g | Hedef: {hedef_yag}g\nHormon sağlığın için sağlıklı yağları artır.")
+                            elif ort_y > hedef_yag * 1.15:
+                                st.info(f"📈 **Yağ Yüksek**\n\nOrt: {ort_y}g | Hedef: {hedef_yag}g\nKalori sınırını çabuk doldurabilir, azaltmalısın.")
+                            else:
+                                st.success(f"✅ **Yağ İdeal**\n\nOrt: {ort_y}g | Hedef: {hedef_yag}g\nKusursuz denge!")
+                    else:
+                        st.info("Henüz yeterli makro verisi yok.")
